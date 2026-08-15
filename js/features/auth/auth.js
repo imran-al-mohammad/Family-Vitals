@@ -120,6 +120,7 @@ function renderSignupScreen(root) {
         password: root.querySelector('#signup-password').value,
         options: {
           data: { full_name: fullName },
+          emailRedirectTo: authRedirectTo(),
         },
       });
 
@@ -141,6 +142,13 @@ function renderSignupScreen(root) {
       setButtonBusy(submit, false, 'Create account');
     }
   });
+}
+
+function authRedirectTo() {
+  const url = new URL(window.location.href);
+  url.hash = '';
+  url.search = '';
+  return url.toString();
 }
 
 async function warnIfDatabaseMissing(root) {

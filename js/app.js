@@ -17,7 +17,8 @@ let renderGeneration = 0;
 
 function currentRoute() {
   const raw = (window.location.hash || '#/').replace(/^#/, '');
-  const path = raw.startsWith('/') ? raw : `/${raw}`;
+  const withoutQuery = raw.split('?')[0];
+  const path = withoutQuery.startsWith('/') ? withoutQuery : `/${withoutQuery}`;
   return path === '' ? '/' : path;
 }
 

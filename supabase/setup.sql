@@ -61,8 +61,13 @@ CREATE TABLE IF NOT EXISTS public.readings (
   value DECIMAL(10, 2),
   unit TEXT CHECK (unit IN ('mg/dL', 'mmol/L')),
   context TEXT CHECK (context IN ('fasting', 'after-meal', 'random')),
-  notes TEXT
+  notes TEXT,
+  logged_by UUID REFERENCES auth.users(id) ON DELETE SET NULL
 );
+
+ALTER TABLE public.readings ADD COLUMN IF NOT EXISTS logged_by UUID REFERENCES auth.users(id) ON DELETE SET NULL;
+UPDATE public.readings SET logged_by = user_id WHERE logged_by IS NULL;
+ALTER TABLE public.readings ALTER COLUMN logged_by SET DEFAULT auth.uid();
 
 ALTER TABLE public.readings ENABLE ROW LEVEL SECURITY;
 
@@ -271,16 +276,59 @@ CREATE POLICY readings_select ON public.readings
 
 CREATE POLICY readings_insert ON public.readings
   FOR INSERT TO authenticated
-  WITH CHECK (user_id = auth.uid());
+  WITH CHECK (
+    (logged_by IS NULL OR logged_by = auth.uid())
+    AND (
+      user_id = auth.uid()
+      OR EXISTS (
+        SELECT 1
+        FROM public.profiles owner
+        WHERE owner.id = user_id
+          AND owner.family_id IS NOT NULL
+          AND owner.family_id = public.current_family_id()
+      )
+    )
+  );
 
 CREATE POLICY readings_update ON public.readings
   FOR UPDATE TO authenticated
-  USING (user_id = auth.uid() OR public.is_super_admin())
-  WITH CHECK (user_id = auth.uid() OR public.is_super_admin());
+  USING (
+    user_id = auth.uid()
+    OR logged_by = auth.uid()
+    OR public.is_super_admin()
+    OR EXISTS (
+      SELECT 1
+      FROM public.profiles owner
+      WHERE owner.id = user_id
+        AND owner.family_id IS NOT NULL
+        AND owner.family_id = public.current_family_id()
+    )
+  )
+  WITH CHECK (
+    user_id = auth.uid()
+    OR EXISTS (
+      SELECT 1
+      FROM public.profiles owner
+      WHERE owner.id = user_id
+        AND owner.family_id IS NOT NULL
+        AND owner.family_id = public.current_family_id()
+    )
+  );
 
 CREATE POLICY readings_delete ON public.readings
   FOR DELETE TO authenticated
-  USING (user_id = auth.uid() OR public.is_super_admin());
+  USING (
+    user_id = auth.uid()
+    OR logged_by = auth.uid()
+    OR public.is_super_admin()
+    OR EXISTS (
+      SELECT 1
+      FROM public.profiles owner
+      WHERE owner.id = user_id
+        AND owner.family_id IS NOT NULL
+        AND owner.family_id = public.current_family_id()
+    )
+  );
 
 -- Keep is_super_admin out of the authenticated update grant.
 REVOKE UPDATE ON public.profiles FROM authenticated, anon;

@@ -133,6 +133,7 @@ function memberCard(member, latest) {
           <p class="family-name">${escapeHtml(name)}</p>
           <p class="muted">${member.is_super_admin ? 'Administrator' : 'Member'}</p>
         </div>
+        <a href="#/readings?member=${encodeURIComponent(member.id)}" class="text-link family-card-action">Log reading</a>
       </div>
       <div class="latest-readings-preview">
         ${previewRow('bp', latest.bp)}

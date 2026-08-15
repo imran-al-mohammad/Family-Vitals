@@ -6,9 +6,25 @@ import {
   formatReadingValue,
   formatTypeLabel,
 } from '../../shared/format.js';
-import { fetchReadingsForUsers, setupErrorMessage } from '../../shared/api.js';
+import {
+  fetchFamilyMembers,
+  fetchReadingsForUsers,
+  insertReading,
+  setupErrorMessage,
+} from '../../shared/api.js';
 
-export async function renderReadingsUI(root, { user, supabase }) {
+export async function renderReadingsUI(root, { user, profile, supabase }) {
+  let members = [];
+  try {
+    members = await fetchFamilyMembers(supabase, profile?.family_id);
+  } catch {
+    members = [];
+  }
+  const people = membersForPicker(user, profile, members);
+  const canChooseMember = people.length > 1;
+  const preferredId = memberIdFromHash();
+  const selectedId = people.some((person) => person.id === preferredId) ? preferredId : user.id;
+
   root.innerHTML = `
     <section class="view">
       <header class="view-header">
@@ -21,6 +37,21 @@ export async function renderReadingsUI(root, { user, supabase }) {
       <div class="card">
         <h2 class="section-title">Log a reading</h2>
         <form id="reading-form" class="reading-form">
+          ${
+            canChooseMember
+              ? `<div class="form-group">
+                  <label class="form-label" for="reading-member">Family member</label>
+                  <select id="reading-member" class="form-input">
+                    ${people
+                      .map(
+                        (person) =>
+                          `<option value="${escapeHtml(person.id)}" ${person.id === selectedId ? 'selected' : ''}>${escapeHtml(memberLabel(person, user.id))}</option>`,
+                      )
+                      .join('')}
+                  </select>
+                </div>`
+              : ''
+          }
           <div class="form-group">
             <label class="form-label" for="reading-type">Type</label>
             <select id="reading-type" class="form-input">
@@ -104,8 +135,14 @@ export async function renderReadingsUI(root, { user, supabase }) {
   `;
 
   const typeSelect = root.querySelector('#reading-type');
+  const memberSelect = root.querySelector('#reading-member');
   const form = root.querySelector('#reading-form');
   const submit = root.querySelector('#reading-submit');
+  const namesById = Object.fromEntries(
+    people.map((person) => [person.id, memberLabel(person, user.id)]),
+  );
+
+  const selectedMemberId = () => memberSelect?.value || user.id;
 
   const toggleFields = () => {
     const type = typeSelect.value;
@@ -117,28 +154,41 @@ export async function renderReadingsUI(root, { user, supabase }) {
   typeSelect.addEventListener('change', toggleFields);
   toggleFields();
 
+  memberSelect?.addEventListener('change', async () => {
+    await renderHistory(root, supabase, selectedMemberId(), namesById);
+  });
+
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    const payload = buildReadingPayload(root, user.id);
+    const memberId = selectedMemberId();
+    if (!people.some((person) => person.id === memberId)) {
+      showAlert('Choose a family member.', 'error');
+      return;
+    }
+
+    const payload = buildReadingPayload(root, memberId, user.id);
     if (payload.error) {
       showAlert(payload.error, 'error');
       return;
     }
 
     setButtonBusy(submit, true, 'Saving…');
-    const { error } = await supabase.from('readings').insert(payload.data);
-    setButtonBusy(submit, false, 'Log reading');
-
-    if (error) {
+    try {
+      await insertReading(supabase, payload.data);
+    } catch (error) {
+      setButtonBusy(submit, false, 'Log reading');
       showAlert(setupErrorMessage(error), 'error');
       return;
     }
+    setButtonBusy(submit, false, 'Log reading');
 
-    showAlert('Reading logged.', 'success');
+    const who = namesById[memberId] || 'this member';
+    showAlert(`Reading logged for ${who}.`, 'success');
     form.reset();
+    if (memberSelect) memberSelect.value = memberId;
     typeSelect.value = 'bp';
     toggleFields();
-    await renderHistory(root, supabase, user.id);
+    await renderHistory(root, supabase, memberId, namesById);
   });
 
   root.querySelector('#history-body').addEventListener('click', async (event) => {
@@ -152,16 +202,43 @@ export async function renderReadingsUI(root, { user, supabase }) {
       return;
     }
     showAlert('Reading deleted.', 'success');
-    await renderHistory(root, supabase, user.id);
+    await renderHistory(root, supabase, selectedMemberId(), namesById);
   });
 
-  await renderHistory(root, supabase, user.id);
+  await renderHistory(root, supabase, selectedMemberId(), namesById);
 }
 
-function buildReadingPayload(root, userId) {
+function memberIdFromHash() {
+  const hash = window.location.hash || '';
+  const query = hash.includes('?') ? hash.slice(hash.indexOf('?') + 1) : '';
+  return new URLSearchParams(query).get('member') || '';
+}
+
+function membersForPicker(user, profile, members) {
+  const list = [...(members || [])];
+  if (!list.some((person) => person.id === user.id)) {
+    list.unshift({
+      id: user.id,
+      full_name: profile?.full_name || user.user_metadata?.full_name || '',
+      email: user.email,
+    });
+  }
+  return list.sort((a, b) => {
+    if (a.id === user.id) return -1;
+    if (b.id === user.id) return 1;
+    return String(a.full_name || a.email || '').localeCompare(String(b.full_name || b.email || ''));
+  });
+}
+
+function memberLabel(person, currentUserId) {
+  const name = person.full_name || person.email || 'Unknown';
+  return person.id === currentUserId ? `${name} (you)` : name;
+}
+
+function buildReadingPayload(root, userId, loggedBy) {
   const type = root.querySelector('#reading-type').value;
   const notes = root.querySelector('#reading-notes').value.trim();
-  const data = { user_id: userId, type };
+  const data = { user_id: userId, type, logged_by: loggedBy };
   if (notes) data.notes = notes;
 
   if (type === 'bp') {
@@ -200,17 +277,22 @@ function buildReadingPayload(root, userId) {
   return { error: 'Choose a reading type.' };
 }
 
-async function renderHistory(root, supabase, userId) {
+async function renderHistory(root, supabase, userId, namesById = {}) {
   const status = root.querySelector('#history-status');
   const wrap = root.querySelector('#history-wrap');
   const body = root.querySelector('#history-body');
+  const heading = root.querySelector('#history-section .section-title');
+  const personName = namesById[userId];
+  if (heading) heading.textContent = personName ? `History · ${personName}` : 'History';
 
   try {
     const readings = await fetchReadingsForUsers(supabase, [userId], 200);
     if (readings.length === 0) {
       wrap.classList.add('is-hidden');
       status.classList.remove('is-hidden');
-      status.textContent = 'No readings yet. Log your first reading above.';
+      status.textContent = personName
+        ? `No readings yet for ${personName}.`
+        : 'No readings yet. Log your first reading above.';
       return;
     }
 
@@ -226,7 +308,14 @@ async function renderHistory(root, supabase, userId) {
               ${escapeHtml(formatReadingValue(reading))}
               <span class="status-chip ${statusChip.key}">${escapeHtml(statusChip.label)}</span>
             </td>
-            <td>${escapeHtml(formatDate(reading.created_at))}</td>
+            <td>
+              ${escapeHtml(formatDate(reading.created_at))}
+              ${
+                reading.logged_by && reading.logged_by !== reading.user_id && namesById[reading.logged_by]
+                  ? `<div class="muted">Logged by ${escapeHtml(namesById[reading.logged_by])}</div>`
+                  : ''
+              }
+            </td>
             <td><button type="button" class="btn-text" data-delete-id="${escapeHtml(reading.id)}">Delete</button></td>
           </tr>
         `;

@@ -603,6 +603,11 @@ a {
   margin-bottom: var(--spacing-md);
 }
 
+.family-card-action {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
 .family-avatar {
   width: 44px;
   height: 44px;

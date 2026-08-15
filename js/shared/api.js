@@ -62,6 +62,32 @@ export async function fetchRegistrationEnabled(supabase) {
   return data.value !== 'false';
 }
 
+function isRlsError(error) {
+  const message = String(error?.message || '').toLowerCase();
+  return error?.code === '42501' || message.includes('row-level security');
+}
+
+export async function insertReading(supabase, row) {
+  const first = await supabase.from('readings').insert(row);
+  if (!first.error) return first.data;
+
+  if (row.logged_by && /logged_by/i.test(first.error.message || '')) {
+    const retry = { ...row };
+    delete retry.logged_by;
+    const second = await supabase.from('readings').insert(retry);
+    if (!second.error) return second.data;
+    throw second.error;
+  }
+
+  if (isRlsError(first.error) && row.user_id && row.user_id !== row.logged_by) {
+    throw new Error(
+      'Family members cannot log readings for each other yet. In the Supabase SQL editor, run supabase/migrations/202608150009_family_member_readings.sql, then try again.',
+    );
+  }
+
+  throw first.error;
+}
+
 export async function fetchReadingsForUsers(supabase, userIds, limit = 200) {
   if (!userIds?.length) return [];
   const { data, error } = await supabase

@@ -3,8 +3,10 @@ import { escapeHtml } from '../../shared/html.js';
 import {
   classifyReading,
   formatDate,
+  formatPersonStats,
   formatReadingValue,
   formatTypeLabel,
+  hasBodyStats,
   latestByType,
   readingUnit,
 } from '../../shared/format.js';
@@ -20,8 +22,10 @@ import {
   groupReadingsByUser,
   personName,
 } from '../../shared/insights.js';
+import { bindBodyStatsForm, bodyStatsFieldsHtml } from '../../shared/bodyStats.js';
 
-export async function renderDashboard(root, { user, profile, supabase }) {
+export async function renderDashboard(root, ctx) {
+  const { user, profile, supabase } = ctx;
   root.innerHTML = `<p class="empty-state">Loading dashboard…</p>`;
 
   try {
@@ -34,8 +38,9 @@ export async function renderDashboard(root, { user, profile, supabase }) {
     );
     const readingsByUser = groupReadingsByUser(allReadings);
     const ownReadings = readingsByUser[user.id] || [];
+    const self = people.find((person) => person.id === user.id) || profile;
     const latest = latestByType(ownReadings);
-    const insights = buildPersonInsights(ownReadings);
+    const insights = buildPersonInsights(ownReadings, self);
     const alerts = buildAlerts(people, readingsByUser, { currentUserId: user.id });
     const weekHousehold = allReadings.filter(
       (reading) => Date.now() - new Date(reading.created_at).getTime() <= 7 * 24 * 60 * 60 * 1000,
@@ -54,15 +59,28 @@ export async function renderDashboard(root, { user, profile, supabase }) {
         ${alertsSection(alerts)}
 
         <div class="metric-grid">
-          ${metricCard('bp', latest.bp)}
-          ${metricCard('pulse', latest.pulse)}
-          ${metricCard('blood-sugar', latest['blood-sugar'])}
+          ${metricCard('bp', latest.bp, self)}
+          ${metricCard('pulse', latest.pulse, self)}
+          ${metricCard('blood-sugar', latest['blood-sugar'], self)}
         </div>
+
+        <section class="section">
+          <div class="card">
+            <h2 class="section-title">Your details</h2>
+            <p class="muted mb-4">Age and weight change how readings are judged for you.</p>
+            <form id="own-stats-form">
+              ${bodyStatsFieldsHtml(self, { prefix: 'own-' })}
+              <button type="submit" class="btn-secondary">Save</button>
+            </form>
+          </div>
+        </section>
 
         <section class="section">
           <div class="section-heading">
             <h2 class="section-title">Insights</h2>
-            <p class="muted">${insights.weekCount} reading${insights.weekCount === 1 ? '' : 's'} this week</p>
+            <p class="muted">${insights.weekCount} reading${insights.weekCount === 1 ? '' : 's'} this week${
+              insights.statsLabel ? ` · ${insights.statsLabel}` : ''
+            }${!insights.personalized ? ' · general adult ranges' : ''}</p>
           </div>
           <div class="metric-grid">
             ${insightCard('Blood pressure', insights.types.bp, '7-day average')}
@@ -91,6 +109,15 @@ export async function renderDashboard(root, { user, profile, supabase }) {
         </section>
       </section>
     `;
+
+    bindBodyStatsForm(root.querySelector('#own-stats-form'), {
+      supabase,
+      userId: user.id,
+      onSaved: async (stats) => {
+        ctx.profile = { ...profile, ...stats };
+        await renderDashboard(root, ctx);
+      },
+    });
   } catch (error) {
     root.innerHTML = `<p class="empty-state">${escapeHtml(setupErrorMessage(error))}</p>`;
     showAlert(setupErrorMessage(error), 'error');
@@ -104,6 +131,8 @@ function peopleForDashboard(user, profile, members) {
       id: user.id,
       full_name: profile?.full_name || user.user_metadata?.full_name || '',
       email: user.email,
+      age_years: profile?.age_years ?? null,
+      weight_kg: profile?.weight_kg ?? null,
     });
   }
   return list.sort((a, b) => {
@@ -147,8 +176,8 @@ function severityLabel(severity) {
   return 'Note';
 }
 
-function metricCard(type, reading) {
-  const status = classifyReading(reading);
+function metricCard(type, reading, person) {
+  const status = classifyReading(reading, person);
   const value = reading ? formatReadingValue(reading) : '—';
   const unit = reading ? readingUnit(reading) : '';
   const when = reading ? formatDate(reading.created_at) : 'No readings yet';
@@ -168,17 +197,27 @@ function insightCard(title, series, caption) {
   const value = series?.avg?.label || '—';
   const unit = series?.avg?.unit || '';
   const trend = series?.trend;
+  const status = series?.status;
+  const target = series?.target;
+  const meta = [caption, target ? `target ${target}` : ''].filter(Boolean).join(' · ');
   return `
     <article class="metric-card">
       <p class="metric-label">${escapeHtml(title)}</p>
       <p class="metric-value">${escapeHtml(value)}</p>
       <p class="metric-label">${escapeHtml(unit)}</p>
-      <p class="metric-meta">${escapeHtml(caption)}</p>
-      ${
-        trend
-          ? `<span class="status-chip ${trend.key === 'rising' ? 'warning' : 'unknown'}">${escapeHtml(trend.label)}</span>`
-          : `<span class="status-chip unknown">Need more data</span>`
-      }
+      <p class="metric-meta">${escapeHtml(meta)}</p>
+      <div class="chip-row">
+        ${
+          status
+            ? `<span class="status-chip ${status.key}">${escapeHtml(status.label)}</span>`
+            : ''
+        }
+        ${
+          trend
+            ? `<span class="status-chip ${trend.key === 'rising' ? 'warning' : 'unknown'}">${escapeHtml(trend.label)}</span>`
+            : `<span class="status-chip unknown">Need more data</span>`
+        }
+      </div>
     </article>
   `;
 }
@@ -238,7 +277,9 @@ function historyCard(person, readings, currentUserId, alerts) {
       <div class="family-card-head">
         <div>
           <p class="family-name">${escapeHtml(name)}</p>
-          <p class="muted">${readings.length} saved reading${readings.length === 1 ? '' : 's'}</p>
+          <p class="muted">${readings.length} saved reading${readings.length === 1 ? '' : 's'}${
+            formatPersonStats(person) ? ` · ${escapeHtml(formatPersonStats(person))}` : hasBodyStats(person) ? '' : ' · add age & weight'
+          }</p>
         </div>
         <a href="#/readings?member=${encodeURIComponent(person.id)}" class="text-link family-card-action">Full history</a>
       </div>
@@ -253,7 +294,7 @@ function historyCard(person, readings, currentUserId, alerts) {
           : `<ul class="history-mini">
               ${recent
                 .map((reading) => {
-                  const status = classifyReading(reading);
+                  const status = classifyReading(reading, person);
                   return `<li>
                     <span>${escapeHtml(formatTypeLabel(reading.type))}</span>
                     <span>${escapeHtml(formatReadingValue(reading).split(' · ')[0])}</span>

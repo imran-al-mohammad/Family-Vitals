@@ -1,10 +1,15 @@
 import {
   classifyReading,
   formatDate,
+  formatPersonStats,
   formatReadingValue,
   formatTypeLabel,
+  hasBodyStats,
   latestByType,
   numericValue,
+  personAgeYears,
+  readingFromAverage,
+  readingThresholds,
 } from './format.js';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -87,19 +92,27 @@ export function trendForType(readings, type, now = Date.now()) {
   return { key: 'falling', label: 'Falling' };
 }
 
-export function buildPersonInsights(readings, now = Date.now()) {
+export function buildPersonInsights(readings, person, now = Date.now()) {
   const week = filterSince(readings, now - 7 * DAY);
   const month = filterSince(readings, now - 30 * DAY);
+  const limits = readingThresholds(person);
   const types = {};
   for (const type of TYPES) {
+    const avg = averageForType(week, type);
+    const synthetic = readingFromAverage(type, avg);
     types[type] = {
-      avg: averageForType(week, type),
+      avg,
       trend: trendForType(readings, type, now),
+      status: synthetic ? classifyReading(synthetic, person) : null,
+      target: type === 'bp' ? limits.bpTarget : type === 'pulse' ? limits.pulseTarget : null,
     };
   }
   return {
     weekCount: week.length,
     monthCount: month.length,
+    personalized: limits.personalized,
+    statsLabel: formatPersonStats(person),
+    age: personAgeYears(person),
     types,
   };
 }
@@ -110,6 +123,16 @@ export function buildAlerts(people, readingsByUser, { currentUserId, now = Date.
   for (const person of people || []) {
     const name = personName(person, currentUserId);
     const rows = readingsByUser[person.id] || [];
+
+    if (!hasBodyStats(person) && (rows.length > 0 || person.id === currentUserId)) {
+      alerts.push({
+        id: `${person.id}-stats`,
+        severity: 'info',
+        personId: person.id,
+        title: `Add age and weight for ${name}`,
+        detail: 'Insights use general adult ranges until both are set.',
+      });
+    }
 
     if (rows.length === 0) continue;
 
@@ -129,14 +152,14 @@ export function buildAlerts(people, readingsByUser, { currentUserId, now = Date.
     for (const type of TYPES) {
       const reading = latest[type];
       if (!reading) continue;
-      const status = classifyReading(reading);
+      const status = classifyReading(reading, person);
       if (status.key !== 'danger' && status.key !== 'warning') continue;
 
       const sameType = rows.filter((row) => row.type === type);
       const repeated =
         sameType.length >= 2 &&
-        classifyReading(sameType[0]).key === 'danger' &&
-        classifyReading(sameType[1]).key === 'danger';
+        classifyReading(sameType[0], person).key === 'danger' &&
+        classifyReading(sameType[1], person).key === 'danger';
 
       alerts.push({
         id: `${person.id}-${type}`,

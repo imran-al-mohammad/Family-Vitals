@@ -3,6 +3,7 @@ import { escapeHtml } from '../../shared/html.js';
 import {
   classifyReading,
   formatDate,
+  formatPersonStats,
   formatReadingValue,
   formatTypeLabel,
 } from '../../shared/format.js';
@@ -12,6 +13,7 @@ import {
   insertReading,
   setupErrorMessage,
 } from '../../shared/api.js';
+import { bindBodyStatsForm, bodyStatsFieldsHtml } from '../../shared/bodyStats.js';
 
 export async function renderReadingsUI(root, { user, profile, supabase }) {
   let members = [];
@@ -33,6 +35,8 @@ export async function renderReadingsUI(root, { user, profile, supabase }) {
           <h1 class="view-title">Readings</h1>
         </div>
       </header>
+
+      <div class="card" id="reading-stats-card"></div>
 
       <div class="card">
         <h2 class="section-title">Log a reading</h2>
@@ -106,6 +110,19 @@ export async function renderReadingsUI(root, { user, profile, supabase }) {
           </div>
 
           <div class="form-group">
+            <label class="form-label" for="reading-when-mode">When</label>
+            <select id="reading-when-mode" class="form-input">
+              <option value="now">Just now</option>
+              <option value="past">A previous date and time</option>
+            </select>
+          </div>
+          <div id="reading-when-fields" class="form-group is-hidden">
+            <label class="form-label" for="reading-when">Date and time</label>
+            <input type="datetime-local" id="reading-when" class="form-input">
+            <p class="form-hint muted">Use this to add historical readings from a notebook, clinic visit, or earlier today.</p>
+          </div>
+
+          <div class="form-group">
             <label class="form-label" for="reading-notes">Notes (optional)</label>
             <textarea id="reading-notes" class="form-input form-textarea" rows="2" maxlength="500" placeholder="Any notes…"></textarea>
           </div>
@@ -136,6 +153,9 @@ export async function renderReadingsUI(root, { user, profile, supabase }) {
 
   const typeSelect = root.querySelector('#reading-type');
   const memberSelect = root.querySelector('#reading-member');
+  const whenMode = root.querySelector('#reading-when-mode');
+  const whenFields = root.querySelector('#reading-when-fields');
+  const whenInput = root.querySelector('#reading-when');
   const form = root.querySelector('#reading-form');
   const submit = root.querySelector('#reading-submit');
   const namesById = Object.fromEntries(
@@ -143,6 +163,35 @@ export async function renderReadingsUI(root, { user, profile, supabase }) {
   );
 
   const selectedMemberId = () => memberSelect?.value || user.id;
+  const selectedPerson = () => people.find((person) => person.id === selectedMemberId()) || people[0];
+
+  const paintStatsForm = () => {
+    const card = root.querySelector('#reading-stats-card');
+    const person = selectedPerson();
+    if (!card || !person) return;
+    const stats = formatPersonStats(person);
+    card.innerHTML = `
+      <h2 class="section-title">Age &amp; weight</h2>
+      <p class="muted mb-4">${
+        stats
+          ? `Readings for this person are judged using ${escapeHtml(stats)}.`
+          : 'Add age and weight so alerts and insights use the right ranges for this person.'
+      }</p>
+      <form id="reading-stats-form">
+        ${bodyStatsFieldsHtml(person, { prefix: 'reading-' })}
+        <button type="submit" class="btn-secondary">Save</button>
+      </form>
+    `;
+    bindBodyStatsForm(card.querySelector('#reading-stats-form'), {
+      supabase,
+      userId: person.id,
+      onSaved: async (next) => {
+        Object.assign(person, next);
+        paintStatsForm();
+        await renderHistory(root, supabase, person.id, namesById, person);
+      },
+    });
+  };
 
   const toggleFields = () => {
     const type = typeSelect.value;
@@ -151,11 +200,24 @@ export async function renderReadingsUI(root, { user, profile, supabase }) {
     root.querySelector('#sugar-fields').classList.toggle('is-hidden', type !== 'blood-sugar');
   };
 
+  const toggleWhenFields = () => {
+    const past = whenMode.value === 'past';
+    whenFields.classList.toggle('is-hidden', !past);
+    whenInput.required = past;
+    if (past && !whenInput.value) {
+      whenInput.value = toDateTimeLocalValue();
+    }
+    whenInput.max = toDateTimeLocalValue();
+  };
+
   typeSelect.addEventListener('change', toggleFields);
+  whenMode.addEventListener('change', toggleWhenFields);
   toggleFields();
+  toggleWhenFields();
 
   memberSelect?.addEventListener('change', async () => {
-    await renderHistory(root, supabase, selectedMemberId(), namesById);
+    paintStatsForm();
+    await renderHistory(root, supabase, selectedMemberId(), namesById, selectedPerson());
   });
 
   form.addEventListener('submit', async (event) => {
@@ -183,7 +245,7 @@ export async function renderReadingsUI(root, { user, profile, supabase }) {
     setButtonBusy(submit, false, 'Log reading');
 
     const who = namesById[memberId] || 'this member';
-    const status = classifyReading(payload.data);
+    const status = classifyReading(payload.data, selectedPerson());
     if (status.key === 'danger') {
       showAlert(`Logged for ${who}. ${formatTypeLabel(payload.data.type)} is ${status.label.toLowerCase()}.`, 'error');
     } else if (status.key === 'warning') {
@@ -194,8 +256,11 @@ export async function renderReadingsUI(root, { user, profile, supabase }) {
     form.reset();
     if (memberSelect) memberSelect.value = memberId;
     typeSelect.value = 'bp';
+    whenMode.value = 'now';
+    whenInput.value = '';
     toggleFields();
-    await renderHistory(root, supabase, memberId, namesById);
+    toggleWhenFields();
+    await renderHistory(root, supabase, memberId, namesById, selectedPerson());
   });
 
   root.querySelector('#history-body').addEventListener('click', async (event) => {
@@ -209,10 +274,11 @@ export async function renderReadingsUI(root, { user, profile, supabase }) {
       return;
     }
     showAlert('Reading deleted.', 'success');
-    await renderHistory(root, supabase, selectedMemberId(), namesById);
+    await renderHistory(root, supabase, selectedMemberId(), namesById, selectedPerson());
   });
 
-  await renderHistory(root, supabase, selectedMemberId(), namesById);
+  paintStatsForm();
+  await renderHistory(root, supabase, selectedMemberId(), namesById, selectedPerson());
 }
 
 function memberIdFromHash() {
@@ -228,6 +294,8 @@ function membersForPicker(user, profile, members) {
       id: user.id,
       full_name: profile?.full_name || user.user_metadata?.full_name || '',
       email: user.email,
+      age_years: profile?.age_years ?? null,
+      weight_kg: profile?.weight_kg ?? null,
     });
   }
   return list.sort((a, b) => {
@@ -242,11 +310,44 @@ function memberLabel(person, currentUserId) {
   return person.id === currentUserId ? `${name} (you)` : name;
 }
 
+function toDateTimeLocalValue(date = new Date()) {
+  const pad = (value) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function readingTimestamp(root) {
+  const mode = root.querySelector('#reading-when-mode')?.value || 'now';
+  if (mode !== 'past') return { iso: null };
+
+  const raw = root.querySelector('#reading-when')?.value;
+  if (!raw) return { error: 'Choose the date and time of this reading.' };
+
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return { error: 'Enter a valid date and time.' };
+
+  const now = Date.now();
+  if (date.getTime() > now + 60 * 1000) {
+    return { error: 'Reading time cannot be in the future.' };
+  }
+
+  const oldest = new Date();
+  oldest.setFullYear(oldest.getFullYear() - 30);
+  if (date < oldest) {
+    return { error: 'Reading time cannot be more than 30 years ago.' };
+  }
+
+  return { iso: date.toISOString() };
+}
+
 function buildReadingPayload(root, userId, loggedBy) {
   const type = root.querySelector('#reading-type').value;
   const notes = root.querySelector('#reading-notes').value.trim();
+  const when = readingTimestamp(root);
+  if (when.error) return { error: when.error };
+
   const data = { user_id: userId, type, logged_by: loggedBy };
   if (notes) data.notes = notes;
+  if (when.iso) data.created_at = when.iso;
 
   if (type === 'bp') {
     const systolic = Number(root.querySelector('#systolic').value);
@@ -284,7 +385,7 @@ function buildReadingPayload(root, userId, loggedBy) {
   return { error: 'Choose a reading type.' };
 }
 
-async function renderHistory(root, supabase, userId, namesById = {}) {
+async function renderHistory(root, supabase, userId, namesById = {}, person = null) {
   const status = root.querySelector('#history-status');
   const wrap = root.querySelector('#history-wrap');
   const body = root.querySelector('#history-body');
@@ -307,7 +408,7 @@ async function renderHistory(root, supabase, userId, namesById = {}) {
     wrap.classList.remove('is-hidden');
     body.innerHTML = readings
       .map((reading) => {
-        const statusChip = classifyReading(reading);
+        const statusChip = classifyReading(reading, person);
         return `
           <tr>
             <td>${escapeHtml(formatTypeLabel(reading.type))}</td>

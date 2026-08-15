@@ -36,6 +36,7 @@ function renderAuth() {
 }
 
 function renderShell() {
+  document.body.classList.remove('nav-open');
   const route = currentRoute();
   const isAdmin = Boolean(currentProfile?.is_super_admin);
   const name = currentProfile?.full_name || currentUser?.email || '';
@@ -43,9 +44,13 @@ function renderShell() {
   app.innerHTML = `
     <div class="app-shell">
       <header class="header">
-        <div class="container">
+        <div class="container header-bar">
           <a href="#/" class="logo">Family Vitals</a>
-          <nav class="nav-links" aria-label="Main">
+          <button type="button" class="nav-toggle" id="nav-toggle" aria-expanded="false" aria-controls="site-nav">
+            <span class="nav-toggle-bars" aria-hidden="true"></span>
+            <span class="sr-only">Menu</span>
+          </button>
+          <nav class="nav-links" id="site-nav" aria-label="Main">
             <a href="#/" data-route="/" class="${route === '/' ? 'is-active' : ''}">Dashboard</a>
             <a href="#/family" data-route="/family" class="${route === '/family' ? 'is-active' : ''}">Family</a>
             <a href="#/readings" data-route="/readings" class="${route === '/readings' ? 'is-active' : ''}">Readings</a>
@@ -58,6 +63,7 @@ function renderShell() {
             <button type="button" class="btn-secondary" id="sign-out-btn">Sign out</button>
           </nav>
         </div>
+        <button type="button" class="nav-scrim" id="nav-scrim" tabindex="-1" aria-hidden="true"></button>
       </header>
       <main>
         <div class="container" id="view-root">
@@ -67,9 +73,47 @@ function renderShell() {
     </div>
   `;
 
+  bindNavMenu(app);
+
   app.querySelector('#sign-out-btn').addEventListener('click', async () => {
     const { error } = await supabase.auth.signOut();
     if (error) showAlert(error.message, 'error');
+  });
+}
+
+function bindNavMenu(root) {
+  const header = root.querySelector('.header');
+  const toggle = root.querySelector('#nav-toggle');
+  const nav = root.querySelector('#site-nav');
+  const scrim = root.querySelector('#nav-scrim');
+  if (!header || !toggle || !nav) return;
+
+  const setOpen = (open) => {
+    header.classList.toggle('is-nav-open', open);
+    document.body.classList.toggle('nav-open', open);
+    toggle.setAttribute('aria-expanded', String(open));
+    const label = toggle.querySelector('.sr-only');
+    if (label) label.textContent = open ? 'Close menu' : 'Menu';
+    if (scrim) scrim.setAttribute('aria-hidden', String(!open));
+  };
+
+  toggle.addEventListener('click', () => {
+    setOpen(!header.classList.contains('is-nav-open'));
+  });
+
+  header.querySelector('.logo')?.addEventListener('click', () => setOpen(false));
+
+  scrim?.addEventListener('click', () => setOpen(false));
+
+  nav.addEventListener('click', (event) => {
+    if (event.target.closest('a, #sign-out-btn')) setOpen(false);
+  });
+
+  header.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      setOpen(false);
+      toggle.focus();
+    }
   });
 }
 
@@ -102,6 +146,7 @@ async function renderCurrentView() {
     return;
   }
   await renderDashboard(viewRoot, ctx);
+  currentProfile = ctx.profile || currentProfile;
 }
 
 async function renderApp() {

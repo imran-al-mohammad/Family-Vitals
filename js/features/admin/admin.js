@@ -1,20 +1,32 @@
 import { setButtonBusy, showAlert } from '../../services/uiService.js';
 import { escapeHtml } from '../../shared/html.js';
 import { adminCreateUser, isMissingRelation, setupErrorMessage } from '../../shared/api.js';
+import { parseBodyStats } from '../../shared/bodyStats.js';
+import { formatPersonStats } from '../../shared/format.js';
 
 export async function renderAdminUI(root, { supabase }) {
   root.innerHTML = `<p class="empty-state">Loading admin…</p>`;
 
   try {
-    const [{ data: settings }, { data: users, error: usersError }, { data: families, error: familiesError }] =
+    const [{ data: settings }, usersResult, { data: families, error: familiesError }] =
       await Promise.all([
         supabase.from('app_settings').select('key, value'),
         supabase
           .from('profiles')
-          .select('id, full_name, email, family_id, is_super_admin')
+          .select('id, full_name, email, family_id, is_super_admin, age_years, weight_kg')
           .order('full_name', { ascending: true }),
         supabase.from('families').select('id, name').order('name', { ascending: true }),
       ]);
+
+    let { data: users, error: usersError } = usersResult;
+    if (usersError && /age_years|weight_kg/.test(usersError.message || '')) {
+      const retry = await supabase
+        .from('profiles')
+        .select('id, full_name, email, family_id, is_super_admin')
+        .order('full_name', { ascending: true });
+      users = retry.data;
+      usersError = retry.error;
+    }
 
     if (usersError) throw usersError;
     if (familiesError) throw familiesError;
@@ -60,6 +72,16 @@ export async function renderAdminUI(root, { supabase }) {
               <div class="form-group">
                 <label class="form-label" for="new-user-password">Password</label>
                 <input type="password" id="new-user-password" class="form-input" placeholder="At least 6 characters" autocomplete="new-password" minlength="6" required>
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label" for="new-user-age">Age (years)</label>
+                  <input type="number" id="new-user-age" name="age_years" class="form-input" min="0" max="130" step="1" inputmode="numeric">
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="new-user-weight">Weight (kg)</label>
+                  <input type="number" id="new-user-weight" name="weight_kg" class="form-input" min="2" max="400" step="0.1" inputmode="decimal">
+                </div>
               </div>
               <div class="form-group">
                 <label class="form-label" for="new-user-family">Family</label>
@@ -118,7 +140,7 @@ export async function renderAdminUI(root, { supabase }) {
             !users?.length
               ? `<p class="empty-state">No profiles yet.</p>`
               : `<div class="table-wrap"><table class="table">
-                  <thead><tr><th>Name</th><th>Email</th><th>Family</th><th>Role</th></tr></thead>
+                  <thead><tr><th>Name</th><th>Email</th><th>Age / weight</th><th>Family</th><th>Role</th></tr></thead>
                   <tbody>
                     ${users
                       .map(
@@ -126,6 +148,7 @@ export async function renderAdminUI(root, { supabase }) {
                           <tr>
                             <td>${escapeHtml(person.full_name || '—')}</td>
                             <td>${escapeHtml(person.email || '—')}</td>
+                            <td>${escapeHtml(formatPersonStats(person) || '—')}</td>
                             <td>${escapeHtml(familyName[person.family_id] || 'Unassigned')}</td>
                             <td>${person.is_super_admin ? 'Admin' : 'Member'}</td>
                           </tr>`,
@@ -169,10 +192,22 @@ function bindAdminEvents(root, supabase, { users, families }) {
     const email = root.querySelector('#new-user-email').value.trim();
     const password = root.querySelector('#new-user-password').value;
     const familyId = root.querySelector('#new-user-family').value;
+    const stats = parseBodyStats(addUserForm);
+    if (stats.error) {
+      showAlert(stats.error, 'error');
+      return;
+    }
 
     setButtonBusy(addUserBtn, true, 'Adding…');
     try {
-      await adminCreateUser(supabase, { email, password, fullName, familyId });
+      await adminCreateUser(supabase, {
+        email,
+        password,
+        fullName,
+        familyId,
+        ageYears: stats.ageYears,
+        weightKg: stats.weightKg,
+      });
       showAlert('User added. They can sign in with that email and password.', 'success');
       await renderAdminUI(root, { supabase });
     } catch (error) {

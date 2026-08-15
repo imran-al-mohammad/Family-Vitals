@@ -100,15 +100,56 @@ export async function fetchReadingsForUsers(supabase, userIds, limit = 200) {
   return data || [];
 }
 
+const MEMBER_COLUMNS =
+  'id, full_name, avatar, email, family_id, is_super_admin, age_years, weight_kg';
+
 export async function fetchFamilyMembers(supabase, familyId) {
   if (!familyId) return [];
-  const { data, error } = await supabase
+  const full = await supabase
+    .from('profiles')
+    .select(MEMBER_COLUMNS)
+    .eq('family_id', familyId)
+    .order('full_name', { ascending: true });
+  if (!full.error) return full.data || [];
+
+  if (!/age_years|weight_kg/.test(full.error.message || '')) throw full.error;
+
+  const basic = await supabase
     .from('profiles')
     .select('id, full_name, avatar, email, family_id, is_super_admin')
     .eq('family_id', familyId)
     .order('full_name', { ascending: true });
-  if (error) throw error;
-  return data || [];
+  if (basic.error) throw basic.error;
+  return basic.data || [];
+}
+
+export async function updatePersonBodyStats(supabase, { userId, ageYears, weightKg }) {
+  const rpc = await supabase.rpc('update_person_body_stats', {
+    target_user: userId,
+    new_age_years: ageYears,
+    new_weight_kg: weightKg,
+  });
+  if (!rpc.error) return rpc.data;
+
+  if (!isMissingRelation(rpc.error)) throw rpc.error;
+
+  const { error } = await supabase
+    .from('profiles')
+    .update({
+      age_years: ageYears,
+      weight_kg: weightKg,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', userId);
+
+  if (!error) return null;
+
+  if (/age_years|weight_kg/.test(error.message || '')) {
+    throw new Error(
+      'Age and weight columns are not installed. In the Supabase SQL editor, run supabase/migrations/202608150010_profile_age_weight.sql, then try again.',
+    );
+  }
+  throw error;
 }
 
 export async function createFamilyForUser(supabase, name) {
@@ -147,7 +188,7 @@ export async function createFamilyForUser(supabase, name) {
   return family.id;
 }
 
-export async function adminCreateUser(supabase, { email, password, fullName, familyId }) {
+export async function adminCreateUser(supabase, { email, password, fullName, familyId, ageYears, weightKg }) {
   const { data, error } = await supabase.rpc('admin_create_user', {
     user_email: String(email || '').trim(),
     user_password: String(password || ''),
@@ -155,7 +196,16 @@ export async function adminCreateUser(supabase, { email, password, fullName, fam
     target_family: familyId || null,
   });
 
-  if (!error) return data;
+  if (!error) {
+    if (ageYears != null || weightKg != null) {
+      try {
+        await updatePersonBodyStats(supabase, { userId: data, ageYears, weightKg });
+      } catch {
+        // Account exists even if body stats could not be saved yet.
+      }
+    }
+    return data;
+  }
 
   if (isMissingRelation(error)) {
     throw new Error(

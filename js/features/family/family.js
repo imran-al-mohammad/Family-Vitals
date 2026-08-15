@@ -3,6 +3,7 @@ import { escapeHtml } from '../../shared/html.js';
 import {
   classifyReading,
   formatDate,
+  formatPersonStats,
   formatReadingValue,
   formatTypeLabel,
   getInitials,
@@ -20,6 +21,7 @@ import {
   buildAlerts,
   groupReadingsByUser,
 } from '../../shared/insights.js';
+import { bindBodyStatsForm, bodyStatsFieldsHtml } from '../../shared/bodyStats.js';
 
 export async function renderFamilyView(root, ctx) {
   const { user, supabase } = ctx;
@@ -75,6 +77,16 @@ export async function renderFamilyView(root, ctx) {
         }
       </section>
     `;
+
+    root.querySelectorAll('[data-stats-form]').forEach((form) => {
+      bindBodyStatsForm(form, {
+        supabase,
+        userId: form.getAttribute('data-stats-form'),
+        onSaved: async () => {
+          await renderFamilyView(root, ctx);
+        },
+      });
+    });
   } catch (error) {
     root.innerHTML = `<p class="empty-state">${escapeHtml(setupErrorMessage(error))}</p>`;
     showAlert(setupErrorMessage(error), 'error');
@@ -150,19 +162,23 @@ function memberCard(member, latest, history, alerts) {
         </div>
         <div>
           <p class="family-name">${escapeHtml(name)}</p>
-          <p class="muted">${member.is_super_admin ? 'Administrator' : 'Member'}</p>
+          <p class="muted">${member.is_super_admin ? 'Administrator' : 'Member'}${
+            formatPersonStats(member) ? ` · ${escapeHtml(formatPersonStats(member))}` : ''
+          }</p>
         </div>
         <a href="#/readings?member=${encodeURIComponent(member.id)}" class="text-link family-card-action">Log reading</a>
       </div>
       ${
         topAlert
-          ? `<p class="history-alert"><span class="status-chip ${topAlert.severity}">${topAlert.severity === 'danger' ? 'Alert' : 'Watch'}</span> <span class="muted">${escapeHtml(topAlert.title)}</span></p>`
+          ? `<p class="history-alert"><span class="status-chip ${topAlert.severity}">${
+              topAlert.severity === 'danger' ? 'Alert' : topAlert.severity === 'warning' ? 'Watch' : 'Note'
+            }</span> <span class="muted">${escapeHtml(topAlert.title)}</span></p>`
           : ''
       }
       <div class="latest-readings-preview">
-        ${previewRow('bp', latest.bp)}
-        ${previewRow('pulse', latest.pulse)}
-        ${previewRow('blood-sugar', latest['blood-sugar'])}
+        ${previewRow('bp', latest.bp, member)}
+        ${previewRow('pulse', latest.pulse, member)}
+        ${previewRow('blood-sugar', latest['blood-sugar'], member)}
       </div>
       <div class="member-history">
         <div class="section-heading">
@@ -175,7 +191,7 @@ function memberCard(member, latest, history, alerts) {
             : `<ul class="history-mini">
                 ${recent
                   .map((reading) => {
-                    const status = classifyReading(reading);
+                    const status = classifyReading(reading, member);
                     return `<li>
                       <span>${escapeHtml(formatTypeLabel(reading.type))}</span>
                       <span>${escapeHtml(formatReadingValue(reading).split(' · ')[0])}</span>
@@ -187,15 +203,20 @@ function memberCard(member, latest, history, alerts) {
               </ul>`
         }
       </div>
+      <form class="member-stats-form" data-stats-form="${escapeHtml(member.id)}">
+        <p class="mini-title">Age &amp; weight</p>
+        ${bodyStatsFieldsHtml(member, { prefix: `member-${member.id}-` })}
+        <button type="submit" class="btn-secondary">Save</button>
+      </form>
     </article>
   `;
 }
 
-function previewRow(type, reading) {
+function previewRow(type, reading, person) {
   if (!reading) {
     return `<p class="reading-placeholder">${escapeHtml(formatTypeLabel(type))}: no reading</p>`;
   }
-  const status = classifyReading(reading);
+  const status = classifyReading(reading, person);
   return `
     <p class="reading-preview">
       <span>${escapeHtml(formatTypeLabel(type))}</span>

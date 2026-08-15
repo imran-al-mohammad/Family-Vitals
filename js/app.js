@@ -5,6 +5,7 @@ import { renderDashboard } from './features/dashboard/dashboard.js';
 import { renderFamilyView } from './features/family/family.js';
 import { renderReadingsUI } from './features/readings/readings.js';
 import { renderAdminUI } from './features/admin/admin.js';
+import { renderProfileUI } from './features/profile/profile.js';
 import { escapeHtml } from './shared/html.js';
 import { ensureProfile, setupErrorMessage } from './shared/api.js';
 
@@ -54,6 +55,7 @@ function renderShell() {
             <a href="#/" data-route="/" class="${route === '/' ? 'is-active' : ''}">Dashboard</a>
             <a href="#/family" data-route="/family" class="${route === '/family' ? 'is-active' : ''}">Family</a>
             <a href="#/readings" data-route="/readings" class="${route === '/readings' ? 'is-active' : ''}">Readings</a>
+            <a href="#/profile" data-route="/profile" class="${route === '/profile' ? 'is-active' : ''}">Profile</a>
             ${
               isAdmin
                 ? `<a href="#/admin" data-route="/admin" class="${route === '/admin' ? 'is-active' : ''}">Admin</a>`
@@ -131,6 +133,11 @@ async function renderCurrentView() {
   }
   if (route === '/readings') {
     await renderReadingsUI(viewRoot, ctx);
+    return;
+  }
+  if (route === '/profile') {
+    await renderProfileUI(viewRoot, ctx);
+    currentProfile = ctx.profile || currentProfile;
     return;
   }
   if (route === '/admin') {

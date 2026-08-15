@@ -81,10 +81,37 @@ export function numericValue(reading) {
   return null;
 }
 
+export function parseDateOnly(value) {
+  if (!value) return null;
+  const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (match) {
+    return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  }
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+export function toDateInputValue(value) {
+  const date = parseDateOnly(value);
+  if (!date) return '';
+  const pad = (part) => String(part).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
 export function personAgeYears(person) {
-  const age = Number(person?.age_years);
-  if (!Number.isFinite(age)) return null;
-  return Math.round(age);
+  const dob = parseDateOnly(person?.date_of_birth);
+  if (dob) {
+    const now = new Date();
+    let age = now.getFullYear() - dob.getFullYear();
+    const monthDelta = now.getMonth() - dob.getMonth();
+    if (monthDelta < 0 || (monthDelta === 0 && now.getDate() < dob.getDate())) age -= 1;
+    if (age < 0 || age > 130) return null;
+    return age;
+  }
+
+  const fallback = Number(person?.age_years);
+  if (!Number.isFinite(fallback)) return null;
+  return Math.round(fallback);
 }
 
 export function personWeightKg(person) {

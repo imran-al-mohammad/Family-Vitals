@@ -71,6 +71,7 @@ export async function renderFamilyView(root, ctx) {
                     byUser[member.id] || {},
                     readingsByUser[member.id] || [],
                     alertsForPerson(alerts, member.id),
+                    { currentUserId: user.id, isAdmin: Boolean(profile?.is_super_admin) },
                   ),
                 )
                 .join('')}</div>`
@@ -146,7 +147,7 @@ function groupLatest(readings) {
   return latest;
 }
 
-function memberCard(member, latest, history, alerts) {
+function memberCard(member, latest, history, alerts, { currentUserId, isAdmin } = {}) {
   const name = member.full_name || member.email || 'Unknown';
   const recent = (history || []).slice(0, 4);
   const topAlert = alerts?.[0];
@@ -166,7 +167,16 @@ function memberCard(member, latest, history, alerts) {
             formatPersonStats(member) ? ` · ${escapeHtml(formatPersonStats(member))}` : ''
           }</p>
         </div>
-        <a href="#/readings?member=${encodeURIComponent(member.id)}" class="text-link family-card-action">Log reading</a>
+        <div class="family-card-action">
+          ${
+            member.id === currentUserId
+              ? `<a href="#/profile" class="text-link">Edit profile</a>`
+              : isAdmin
+                ? `<a href="#/admin?member=${encodeURIComponent(member.id)}" class="text-link">Edit</a>`
+                : ''
+          }
+          <a href="#/readings?member=${encodeURIComponent(member.id)}" class="text-link">Log reading</a>
+        </div>
       </div>
       ${
         topAlert
@@ -204,7 +214,7 @@ function memberCard(member, latest, history, alerts) {
         }
       </div>
       <form class="member-stats-form" data-stats-form="${escapeHtml(member.id)}">
-        <p class="mini-title">Age &amp; weight</p>
+        <p class="mini-title">Date of birth &amp; weight</p>
         ${bodyStatsFieldsHtml(member, { prefix: `member-${member.id}-` })}
         <button type="submit" class="btn-secondary">Save</button>
       </form>

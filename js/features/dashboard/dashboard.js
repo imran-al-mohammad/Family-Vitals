@@ -22,7 +22,7 @@ import {
   groupReadingsByUser,
   personName,
 } from '../../shared/insights.js';
-import { bindBodyStatsForm, bodyStatsFieldsHtml } from '../../shared/bodyStats.js';
+import { bindProfileForm, profileFieldsHtml } from '../../shared/profileForm.js';
 
 export async function renderDashboard(root, ctx) {
   const { user, profile, supabase } = ctx;
@@ -66,11 +66,14 @@ export async function renderDashboard(root, ctx) {
 
         <section class="section">
           <div class="card">
-            <h2 class="section-title">Your details</h2>
-            <p class="muted mb-4">Age and weight change how readings are judged for you.</p>
-            <form id="own-stats-form">
-              ${bodyStatsFieldsHtml(self, { prefix: 'own-' })}
-              <button type="submit" class="btn-secondary">Save</button>
+            <div class="section-heading">
+              <h2 class="section-title">Your profile</h2>
+              <a href="#/profile" class="text-link">Open profile</a>
+            </div>
+            <p class="muted mb-4">Name, email, date of birth, and weight. Birth date and weight change how your readings are judged.</p>
+            <form id="own-profile-form">
+              ${profileFieldsHtml(self, { prefix: 'own-' })}
+              <button type="submit" class="btn-primary">Save profile</button>
             </form>
           </div>
         </section>
@@ -110,11 +113,13 @@ export async function renderDashboard(root, ctx) {
       </section>
     `;
 
-    bindBodyStatsForm(root.querySelector('#own-stats-form'), {
+    bindProfileForm(root.querySelector('#own-profile-form'), {
       supabase,
       userId: user.id,
-      onSaved: async (stats) => {
-        ctx.profile = { ...profile, ...stats };
+      onSaved: async (next) => {
+        ctx.profile = { ...profile, ...next };
+        const navUser = document.querySelector('.nav-user');
+        if (navUser && next.full_name) navUser.textContent = next.full_name;
         await renderDashboard(root, ctx);
       },
     });
@@ -131,6 +136,7 @@ function peopleForDashboard(user, profile, members) {
       id: user.id,
       full_name: profile?.full_name || user.user_metadata?.full_name || '',
       email: user.email,
+      date_of_birth: profile?.date_of_birth ?? null,
       age_years: profile?.age_years ?? null,
       weight_kg: profile?.weight_kg ?? null,
     });
@@ -278,7 +284,7 @@ function historyCard(person, readings, currentUserId, alerts) {
         <div>
           <p class="family-name">${escapeHtml(name)}</p>
           <p class="muted">${readings.length} saved reading${readings.length === 1 ? '' : 's'}${
-            formatPersonStats(person) ? ` · ${escapeHtml(formatPersonStats(person))}` : hasBodyStats(person) ? '' : ' · add age & weight'
+            formatPersonStats(person) ? ` · ${escapeHtml(formatPersonStats(person))}` : hasBodyStats(person) ? '' : ' · add date of birth & weight'
           }</p>
         </div>
         <a href="#/readings?member=${encodeURIComponent(person.id)}" class="text-link family-card-action">Full history</a>

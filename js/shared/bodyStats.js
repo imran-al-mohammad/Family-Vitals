@@ -1,19 +1,25 @@
 import { setButtonBusy, showAlert } from '../services/uiService.js';
 import { updatePersonBodyStats, setupErrorMessage } from './api.js';
+import { parseDateOnly, personAgeYears, toDateInputValue } from './format.js';
 import { escapeHtml } from './html.js';
 
 export function parseBodyStats(form) {
-  const ageRaw = form.querySelector('[name="age_years"]')?.value.trim() ?? '';
+  const dobRaw = form.querySelector('[name="date_of_birth"]')?.value.trim() ?? '';
   const weightRaw = form.querySelector('[name="weight_kg"]')?.value.trim() ?? '';
 
-  let ageYears = null;
+  let dateOfBirth = null;
   let weightKg = null;
 
-  if (ageRaw !== '') {
-    ageYears = Number(ageRaw);
-    if (!Number.isInteger(ageYears) || ageYears < 0 || ageYears > 130) {
-      return { error: 'Age must be a whole number between 0 and 130.' };
-    }
+  if (dobRaw !== '') {
+    const dob = parseDateOnly(dobRaw);
+    if (!dob) return { error: 'Enter a valid date of birth.' };
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (dob > today) return { error: 'Date of birth cannot be in the future.' };
+    const oldest = new Date();
+    oldest.setFullYear(oldest.getFullYear() - 130);
+    if (dob < oldest) return { error: 'Date of birth cannot be more than 130 years ago.' };
+    dateOfBirth = toDateInputValue(dob);
   }
 
   if (weightRaw !== '') {
@@ -23,19 +29,21 @@ export function parseBodyStats(form) {
     }
   }
 
-  return { ageYears, weightKg };
+  return { dateOfBirth, weightKg };
 }
 
 export function bodyStatsFieldsHtml(person = {}, { prefix = '' } = {}) {
-  const age = person.age_years ?? '';
+  const dob = toDateInputValue(person.date_of_birth);
   const weight = person.weight_kg ?? '';
-  const ageId = `${prefix}age-years`;
+  const dobId = `${prefix}date-of-birth`;
   const weightId = `${prefix}weight-kg`;
+  const age = personAgeYears(person);
   return `
     <div class="form-row">
       <div class="form-group">
-        <label class="form-label" for="${escapeHtml(ageId)}">Age (years)</label>
-        <input type="number" id="${escapeHtml(ageId)}" name="age_years" class="form-input" min="0" max="130" step="1" inputmode="numeric" value="${escapeHtml(age)}">
+        <label class="form-label" for="${escapeHtml(dobId)}">Date of birth</label>
+        <input type="date" id="${escapeHtml(dobId)}" name="date_of_birth" class="form-input" max="${escapeHtml(toDateInputValue(new Date()))}" value="${escapeHtml(dob)}">
+        ${age != null ? `<p class="form-hint muted">${age} year${age === 1 ? '' : 's'} old</p>` : ''}
       </div>
       <div class="form-group">
         <label class="form-label" for="${escapeHtml(weightId)}">Weight (kg)</label>
@@ -60,11 +68,11 @@ export function bindBodyStatsForm(form, { supabase, userId, onSaved }) {
     try {
       await updatePersonBodyStats(supabase, {
         userId,
-        ageYears: parsed.ageYears,
+        dateOfBirth: parsed.dateOfBirth,
         weightKg: parsed.weightKg,
       });
-      showAlert('Age and weight saved. Insights will use these ranges.', 'success');
-      if (onSaved) await onSaved({ age_years: parsed.ageYears, weight_kg: parsed.weightKg });
+      showAlert('Date of birth and weight saved. Insights will use these ranges.', 'success');
+      if (onSaved) await onSaved({ date_of_birth: parsed.dateOfBirth, weight_kg: parsed.weightKg });
     } catch (error) {
       showAlert(setupErrorMessage(error), 'error');
     } finally {

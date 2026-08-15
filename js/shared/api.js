@@ -101,7 +101,7 @@ export async function fetchReadingsForUsers(supabase, userIds, limit = 200) {
 }
 
 const MEMBER_COLUMNS =
-  'id, full_name, avatar, email, family_id, is_super_admin, age_years, weight_kg';
+  'id, full_name, avatar, email, family_id, is_super_admin, date_of_birth, age_years, weight_kg';
 
 export async function fetchFamilyMembers(supabase, familyId) {
   if (!familyId) return [];
@@ -112,7 +112,7 @@ export async function fetchFamilyMembers(supabase, familyId) {
     .order('full_name', { ascending: true });
   if (!full.error) return full.data || [];
 
-  if (!/age_years|weight_kg/.test(full.error.message || '')) throw full.error;
+  if (!/date_of_birth|age_years|weight_kg/.test(full.error.message || '')) throw full.error;
 
   const basic = await supabase
     .from('profiles')
@@ -123,10 +123,32 @@ export async function fetchFamilyMembers(supabase, familyId) {
   return basic.data || [];
 }
 
-export async function updatePersonBodyStats(supabase, { userId, ageYears, weightKg }) {
+export async function updatePersonProfile(supabase, payload) {
+  const { error } = await supabase.rpc('update_person_profile', {
+    target_user: payload.userId,
+    new_full_name: payload.fullName ?? null,
+    new_email: payload.email ?? null,
+    new_date_of_birth: payload.dateOfBirth ?? null,
+    new_weight_kg: payload.weightKg ?? null,
+    new_family: payload.familyId ?? null,
+    set_family: Boolean(payload.setFamily),
+    new_password: payload.password || null,
+  });
+
+  if (!error) return;
+
+  if (isMissingRelation(error)) {
+    throw new Error(
+      'The profile editor is not installed. In the Supabase SQL editor, run supabase/migrations/202608150012_date_of_birth.sql, then try again.',
+    );
+  }
+  throw error;
+}
+
+export async function updatePersonBodyStats(supabase, { userId, dateOfBirth, weightKg }) {
   const rpc = await supabase.rpc('update_person_body_stats', {
     target_user: userId,
-    new_age_years: ageYears,
+    new_date_of_birth: dateOfBirth,
     new_weight_kg: weightKg,
   });
   if (!rpc.error) return rpc.data;
@@ -136,7 +158,7 @@ export async function updatePersonBodyStats(supabase, { userId, ageYears, weight
   const { error } = await supabase
     .from('profiles')
     .update({
-      age_years: ageYears,
+      date_of_birth: dateOfBirth,
       weight_kg: weightKg,
       updated_at: new Date().toISOString(),
     })
@@ -144,9 +166,9 @@ export async function updatePersonBodyStats(supabase, { userId, ageYears, weight
 
   if (!error) return null;
 
-  if (/age_years|weight_kg/.test(error.message || '')) {
+  if (/date_of_birth|age_years|weight_kg/.test(error.message || '')) {
     throw new Error(
-      'Age and weight columns are not installed. In the Supabase SQL editor, run supabase/migrations/202608150010_profile_age_weight.sql, then try again.',
+      'Date of birth is not installed. In the Supabase SQL editor, run supabase/migrations/202608150012_date_of_birth.sql, then try again.',
     );
   }
   throw error;
@@ -188,7 +210,7 @@ export async function createFamilyForUser(supabase, name) {
   return family.id;
 }
 
-export async function adminCreateUser(supabase, { email, password, fullName, familyId, ageYears, weightKg }) {
+export async function adminCreateUser(supabase, { email, password, fullName, familyId, dateOfBirth, weightKg }) {
   const { data, error } = await supabase.rpc('admin_create_user', {
     user_email: String(email || '').trim(),
     user_password: String(password || ''),
@@ -197,9 +219,9 @@ export async function adminCreateUser(supabase, { email, password, fullName, fam
   });
 
   if (!error) {
-    if (ageYears != null || weightKg != null) {
+    if (dateOfBirth != null || weightKg != null) {
       try {
-        await updatePersonBodyStats(supabase, { userId: data, ageYears, weightKg });
+        await updatePersonBodyStats(supabase, { userId: data, dateOfBirth, weightKg });
       } catch {
         // Account exists even if body stats could not be saved yet.
       }

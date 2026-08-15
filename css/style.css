@@ -123,7 +123,7 @@ input, button, select, textarea {
   color: inherit;
 }
 
-input[type="text"], input[type="number"], input[type="email"], input[type="password"], input[type="datetime-local"], select, textarea {
+input[type="text"], input[type="number"], input[type="email"], input[type="password"], input[type="date"], input[type="datetime-local"], select, textarea {
   -webkit-appearance: none;
   appearance: none;
 }
@@ -412,6 +412,7 @@ main {
   font-size: var(--body-sm-size);
 }
 
+input[type="date"]::-webkit-calendar-picker-indicator,
 input[type="datetime-local"]::-webkit-calendar-picker-indicator {
   filter: invert(1);
   opacity: 0.75;
@@ -744,6 +745,21 @@ a {
 .family-card-action {
   margin-left: auto;
   flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+button.text-link {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.profile-card {
+  max-width: 560px;
 }
 
 .family-avatar {

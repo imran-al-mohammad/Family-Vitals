@@ -3,6 +3,7 @@ import { escapeHtml } from '../../shared/html.js';
 import { adminCreateUser, isMissingRelation, setupErrorMessage } from '../../shared/api.js';
 import { parseBodyStats } from '../../shared/bodyStats.js';
 import { formatPersonStats } from '../../shared/format.js';
+import { bindProfileForm, profileFieldsHtml } from '../../shared/profileForm.js';
 
 export async function renderAdminUI(root, { supabase }) {
   root.innerHTML = `<p class="empty-state">Loading admin…</p>`;
@@ -13,13 +14,13 @@ export async function renderAdminUI(root, { supabase }) {
         supabase.from('app_settings').select('key, value'),
         supabase
           .from('profiles')
-          .select('id, full_name, email, family_id, is_super_admin, age_years, weight_kg')
+          .select('id, full_name, email, family_id, is_super_admin, date_of_birth, age_years, weight_kg')
           .order('full_name', { ascending: true }),
         supabase.from('families').select('id, name').order('name', { ascending: true }),
       ]);
 
     let { data: users, error: usersError } = usersResult;
-    if (usersError && /age_years|weight_kg/.test(usersError.message || '')) {
+    if (usersError && /date_of_birth|age_years|weight_kg/.test(usersError.message || '')) {
       const retry = await supabase
         .from('profiles')
         .select('id, full_name, email, family_id, is_super_admin')
@@ -75,8 +76,8 @@ export async function renderAdminUI(root, { supabase }) {
               </div>
               <div class="form-row">
                 <div class="form-group">
-                  <label class="form-label" for="new-user-age">Age (years)</label>
-                  <input type="number" id="new-user-age" name="age_years" class="form-input" min="0" max="130" step="1" inputmode="numeric">
+                  <label class="form-label" for="new-user-dob">Date of birth</label>
+                  <input type="date" id="new-user-dob" name="date_of_birth" class="form-input">
                 </div>
                 <div class="form-group">
                   <label class="form-label" for="new-user-weight">Weight (kg)</label>
@@ -134,13 +135,22 @@ export async function renderAdminUI(root, { supabase }) {
           </section>
         </div>
 
+        <section class="section card is-hidden" id="edit-member-card">
+          <div class="section-heading">
+            <h2 class="section-title" id="edit-member-title">Edit member</h2>
+            <button type="button" class="text-link" id="edit-member-close">Close</button>
+          </div>
+          <p class="muted mb-4">Change this person's name, email, date of birth, weight, family, or password.</p>
+          <div id="edit-member-form-wrap"></div>
+        </section>
+
         <section class="section">
           <h2 class="section-title">People</h2>
           ${
             !users?.length
               ? `<p class="empty-state">No profiles yet.</p>`
               : `<div class="table-wrap"><table class="table">
-                  <thead><tr><th>Name</th><th>Email</th><th>Age / weight</th><th>Family</th><th>Role</th></tr></thead>
+                  <thead><tr><th>Name</th><th>Email</th><th>Age / weight</th><th>Family</th><th>Role</th><th></th></tr></thead>
                   <tbody>
                     ${users
                       .map(
@@ -151,6 +161,7 @@ export async function renderAdminUI(root, { supabase }) {
                             <td>${escapeHtml(formatPersonStats(person) || '—')}</td>
                             <td>${escapeHtml(familyName[person.family_id] || 'Unassigned')}</td>
                             <td>${person.is_super_admin ? 'Admin' : 'Member'}</td>
+                            <td><button type="button" class="text-link edit-member-btn" data-edit-user="${escapeHtml(person.id)}">Edit</button></td>
                           </tr>`,
                       )
                       .join('')}
@@ -162,6 +173,7 @@ export async function renderAdminUI(root, { supabase }) {
     `;
 
     bindAdminEvents(root, supabase, { users, families });
+    openMemberEditorFromHash(root, supabase, users, families);
   } catch (error) {
     root.innerHTML = `<p class="empty-state">${escapeHtml(setupErrorMessage(error))}</p>`;
     showAlert(setupErrorMessage(error), 'error');
@@ -205,7 +217,7 @@ function bindAdminEvents(root, supabase, { users, families }) {
         password,
         fullName,
         familyId,
-        ageYears: stats.ageYears,
+        dateOfBirth: stats.dateOfBirth,
         weightKg: stats.weightKg,
       });
       showAlert('User added. They can sign in with that email and password.', 'success');
@@ -274,4 +286,56 @@ function bindAdminEvents(root, supabase, { users, families }) {
       setButtonBusy(assignBtn, false, 'Assign');
     }
   });
+
+  root.querySelectorAll('[data-edit-user]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const person = users.find((row) => row.id === button.getAttribute('data-edit-user'));
+      if (person) openMemberEditor(root, supabase, person, families);
+    });
+  });
+
+  root.querySelector('#edit-member-close')?.addEventListener('click', () => {
+    if (memberIdFromHash()) {
+      window.location.hash = '#/admin';
+      return;
+    }
+    root.querySelector('#edit-member-card')?.classList.add('is-hidden');
+  });
+}
+
+function memberIdFromHash() {
+  const hash = window.location.hash || '';
+  const query = hash.includes('?') ? hash.slice(hash.indexOf('?') + 1) : '';
+  return new URLSearchParams(query).get('member') || '';
+}
+
+function openMemberEditorFromHash(root, supabase, users, families) {
+  const id = memberIdFromHash();
+  if (!id) return;
+  const person = (users || []).find((row) => row.id === id);
+  if (person) openMemberEditor(root, supabase, person, families);
+}
+
+function openMemberEditor(root, supabase, person, families) {
+  const card = root.querySelector('#edit-member-card');
+  const wrap = root.querySelector('#edit-member-form-wrap');
+  const title = root.querySelector('#edit-member-title');
+  if (!card || !wrap) return;
+
+  title.textContent = `Edit ${person.full_name || person.email || 'member'}`;
+  wrap.innerHTML = `
+    <form id="edit-member-form">
+      ${profileFieldsHtml(person, { prefix: `edit-${person.id}-`, families })}
+      <button type="submit" class="btn-primary">Save changes</button>
+    </form>
+  `;
+  card.classList.remove('is-hidden');
+  bindProfileForm(wrap.querySelector('#edit-member-form'), {
+    supabase,
+    userId: person.id,
+    onSaved: async () => {
+      await renderAdminUI(root, { supabase });
+    },
+  });
+  card.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }

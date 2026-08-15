@@ -129,7 +129,7 @@ export function buildAlerts(people, readingsByUser, { currentUserId, now = Date.
         id: `${person.id}-stats`,
         severity: 'info',
         personId: person.id,
-        title: `Add age and weight for ${name}`,
+        title: `Add date of birth and weight for ${name}`,
         detail: 'Insights use general adult ranges until both are set.',
       });
     }

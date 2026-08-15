@@ -171,11 +171,11 @@ export async function renderReadingsUI(root, { user, profile, supabase }) {
     if (!card || !person) return;
     const stats = formatPersonStats(person);
     card.innerHTML = `
-      <h2 class="section-title">Age &amp; weight</h2>
+      <h2 class="section-title">Date of birth &amp; weight</h2>
       <p class="muted mb-4">${
         stats
           ? `Readings for this person are judged using ${escapeHtml(stats)}.`
-          : 'Add age and weight so alerts and insights use the right ranges for this person.'
+          : 'Add date of birth and weight so alerts and insights use the right ranges for this person.'
       }</p>
       <form id="reading-stats-form">
         ${bodyStatsFieldsHtml(person, { prefix: 'reading-' })}
@@ -294,6 +294,7 @@ function membersForPicker(user, profile, members) {
       id: user.id,
       full_name: profile?.full_name || user.user_metadata?.full_name || '',
       email: user.email,
+      date_of_birth: profile?.date_of_birth ?? null,
       age_years: profile?.age_years ?? null,
       weight_kg: profile?.weight_kg ?? null,
     });

@@ -120,3 +120,22 @@ export async function createFamilyForUser(supabase, name) {
 
   return family.id;
 }
+
+export async function adminCreateUser(supabase, { email, password, fullName, familyId }) {
+  const { data, error } = await supabase.rpc('admin_create_user', {
+    user_email: String(email || '').trim(),
+    user_password: String(password || ''),
+    user_full_name: String(fullName || '').trim(),
+    target_family: familyId || null,
+  });
+
+  if (!error) return data;
+
+  if (isMissingRelation(error)) {
+    throw new Error(
+      'The add-user function is not installed. In the Supabase SQL editor, run supabase/migrations/202608150008_admin_create_user.sql, then try again.',
+    );
+  }
+
+  throw error;
+}

@@ -1,6 +1,6 @@
 import { setButtonBusy, showAlert } from '../../services/uiService.js';
 import { escapeHtml } from '../../shared/html.js';
-import { isMissingRelation, setupErrorMessage } from '../../shared/api.js';
+import { adminCreateUser, isMissingRelation, setupErrorMessage } from '../../shared/api.js';
 
 export async function renderAdminUI(root, { supabase }) {
   root.innerHTML = `<p class="empty-state">Loading admin…</p>`;
@@ -43,6 +43,35 @@ export async function renderAdminUI(root, { supabase }) {
               </select>
             </div>
             <button type="button" class="btn-secondary" id="toggle-registration">Save</button>
+          </section>
+
+          <section class="card admin-section">
+            <h2 class="section-title">Add user</h2>
+            <p class="muted mb-4">Creates an account they can sign in with right away. Share the password with them.</p>
+            <form id="add-user-form">
+              <div class="form-group">
+                <label class="form-label" for="new-user-name">Full name</label>
+                <input type="text" id="new-user-name" class="form-input" placeholder="Their name" autocomplete="name" required>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="new-user-email">Email</label>
+                <input type="email" id="new-user-email" class="form-input" placeholder="them@example.com" autocomplete="off" required>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="new-user-password">Password</label>
+                <input type="password" id="new-user-password" class="form-input" placeholder="At least 6 characters" autocomplete="new-password" minlength="6" required>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="new-user-family">Family</label>
+                <select id="new-user-family" class="form-input">
+                  <option value="">Unassigned</option>
+                  ${(families || [])
+                    .map((family) => `<option value="${escapeHtml(family.id)}">${escapeHtml(family.name)}</option>`)
+                    .join('')}
+                </select>
+              </div>
+              <button type="submit" class="btn-primary" id="add-user-btn">Add user</button>
+            </form>
           </section>
 
           <section class="card admin-section">
@@ -130,6 +159,26 @@ function bindAdminEvents(root, supabase, { users, families }) {
       return;
     }
     showAlert(value === 'true' ? 'Registration enabled.' : 'Registration disabled in the app.', 'success');
+  });
+
+  const addUserForm = root.querySelector('#add-user-form');
+  const addUserBtn = root.querySelector('#add-user-btn');
+  addUserForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const fullName = root.querySelector('#new-user-name').value.trim();
+    const email = root.querySelector('#new-user-email').value.trim();
+    const password = root.querySelector('#new-user-password').value;
+    const familyId = root.querySelector('#new-user-family').value;
+
+    setButtonBusy(addUserBtn, true, 'Adding…');
+    try {
+      await adminCreateUser(supabase, { email, password, fullName, familyId });
+      showAlert('User added. They can sign in with that email and password.', 'success');
+      await renderAdminUI(root, { supabase });
+    } catch (error) {
+      showAlert(setupErrorMessage(error), 'error');
+      setButtonBusy(addUserBtn, false, 'Add user');
+    }
   });
 
   const createForm = root.querySelector('#create-family-admin-form');

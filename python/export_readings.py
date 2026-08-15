@@ -6,20 +6,14 @@ Utility scripts for data validation, backfill, exports, and admin maintenance.
 These scripts interact with the Supabase backend via the REST API.
 """
 
-import requests
 import csv
 import json
-from datetime import datetime, timedelta
 import sys
+from datetime import datetime
 
-# Configuration - update these with your Supabase details
-SUPABASE_URL = "https://your-project.supabase.co"
-SUPABASE_KEY = "your-anon-key"
-HEADERS = {
-    "apikey": SUPABASE_KEY,
-    "Authorization": f"Bearer {SUPABASE_KEY}",
-    "Content-Type": "application/json",
-}
+import requests
+
+from config import HEADERS, SUPABASE_URL
 
 
 def get_supabase_client():
@@ -290,36 +284,33 @@ def generate_admin_report(output_path="admin_report.json"):
         'statistics': {}
     }
     
-    # Count users
-    users_query = f"{SUPABASE_URL}/rest/v1/profiles?select=count"
-    users_response = supabase.get(users_query, headers=HEADERS)
-    if users_response.status_code == 200:
-        report['statistics']['total_users'] = users_response.json().get('count', 0)
-    
-    # Count families
-    families_query = f"{SUPABASE_URL}/rest/v1/family_members?select=count,family_id"
-    families_response = supabase.get(families_query, headers=HEADERS)
-    if families_response.status_code == 200:
-        families_data = families_response.json()
-        report['statistics']['total_family_members'] = len(families_data)
-        # Count unique families
-        family_ids = set(f.get('family_id') for f in families_data)
-        report['statistics']['total_families'] = len(family_ids)
-    
-    # Count readings
-    readings_query = f"{SUPABASE_URL}/rest/v1/readings?select=count"
-    readings_response = supabase.get(readings_query, headers=HEADERS)
-    if readings_response.status_code == 200:
-        report['statistics']['total_readings'] = readings_response.json().get('count', 0)
-    
-    # Readings by type
+    count_headers = {**HEADERS, "Prefer": "count=exact"}
+
+    def exact_count(path):
+        response = supabase.get(
+            f"{SUPABASE_URL}/rest/v1/{path}",
+            headers=count_headers,
+        )
+        if response.status_code not in (200, 206):
+            return None
+        content_range = response.headers.get("content-range", "")
+        if "/" in content_range:
+            try:
+                return int(content_range.split("/")[-1])
+            except ValueError:
+                return None
+        payload = response.json()
+        return payload.get("count") if isinstance(payload, dict) else len(payload)
+
+    report['statistics']['total_users'] = exact_count("profiles?select=id")
+    report['statistics']['total_families'] = exact_count("families?select=id")
+    report['statistics']['total_family_members'] = exact_count("family_members?select=id")
+    report['statistics']['total_readings'] = exact_count("readings?select=id")
+
     for r_type in ['bp', 'pulse', 'blood-sugar']:
-        type_query = f"{SUPABASE_URL}/rest/v1/readings?select=count&type=eq.{r_type}"
-        type_response = supabase.get(type_query, headers=HEADERS)
-        if type_response.status_code == 200:
-            count = type_response.json().get('count', 0)
-            if count > 0:
-                report['statistics'][f'readings_{r_type}'] = count
+        count = exact_count(f"readings?select=id&type=eq.{r_type}")
+        if count:
+            report['statistics'][f'readings_{r_type}'] = count
     
     # Write report
     try:

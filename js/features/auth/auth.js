@@ -1,149 +1,156 @@
-import { initSupabase } from '../services/supabaseClient.js';
-import { showAlert } from '../services/uiService.js';
+import { getSupabase } from '../../services/supabaseClient.js';
+import { setButtonBusy, showAlert } from '../../services/uiService.js';
+import { fetchRegistrationEnabled, isMissingRelation, setupErrorMessage } from '../../shared/api.js';
 
-const authContainer = document.getElementById('auth-container');
-const appContainer = document.getElementById('app-container');
+export function renderAuthScreen(root, { mode = 'signin' } = {}) {
+  if (mode === 'signup') {
+    renderSignupScreen(root);
+    return;
+  }
+  renderSigninScreen(root);
+}
 
-export const initAuth = async (supabase) => {
-  // Set up auth state change listener
-  supabase.auth.onAuthStateChange(async (event, session) => {
-    if (event === 'SIGNED_IN' || event === 'SIGNED_UP') {
-      // User signed in - redirect to main app
-      showAlert('Welcome to Family Vitals!', 'success');
-      // The app.js will handle the UI switch
-    } else if (event === 'SIGNED_OUT') {
-      // User signed out - show auth screen
-      showAlert('You have been signed out', 'info');
-    }
-  });
-};
-
-export const renderAuthScreen = () => {
-  if (!authContainer || !appContainer) return;
-
-  authContainer.innerHTML = `
-    <div class="card auth-card">
-      <div class="card-header">
-        <span class="card-title">Family Vitals</span>
-      </div>
-      <div class="card-body">
-        <h2 class="form-title">Sign In</h2>
-        
-        <form id="signin-form" class="form-group">
-          <div class="form-group">
-            <label for="email" class="form-label">Email address</label>
-            <input type="email" id="email" class="form-input" placeholder="you@example.com" required>
-          </div>
-          
-          <div class="form-group">
-            <label for="password" class="form-label">Password</label>
-            <input type="password" id="password" class="form-input" placeholder="••••••••" required>
-          </div>
-          
-          <button type="submit" class="btn-primary btn-block">Sign In</button>
-        </form>
-        
-        <p class="mt-4 text-center">
-          <span>Don't have an account? <a href="#" id="signup-link">Sign up</a></span>
-        </p>
+function renderSigninScreen(root) {
+  root.innerHTML = `
+    <div class="auth-screen">
+      <div class="card auth-card">
+        <div class="card-header">
+          <span class="card-title">Family Vitals</span>
+        </div>
+        <div class="card-body">
+          <h2 class="form-title">Sign in</h2>
+          <form id="signin-form">
+            <div class="form-group">
+              <label for="email" class="form-label">Email</label>
+              <input type="email" id="email" class="form-input" placeholder="you@example.com" autocomplete="username" required>
+            </div>
+            <div class="form-group">
+              <label for="password" class="form-label">Password</label>
+              <input type="password" id="password" class="form-input" placeholder="••••••••" autocomplete="current-password" required>
+            </div>
+            <button type="submit" class="btn-primary btn-block" id="signin-submit">Sign in</button>
+          </form>
+          <p class="mt-4 text-center muted">
+            Don't have an account? <a href="#/signup">Sign up</a>
+          </p>
+        </div>
       </div>
     </div>
   `;
 
-  // Handle sign in form
-  const signinForm = document.getElementById('signin-form');
-  signinForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const email = document.getElementById('email').value;
-    const password = document.getElementById('password').value;
-    
+  const form = root.querySelector('#signin-form');
+  const submit = root.querySelector('#signin-submit');
+  warnIfDatabaseMissing(root);
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const supabase = getSupabase();
+    setButtonBusy(submit, true, 'Signing in…');
     const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
+      email: root.querySelector('#email').value.trim(),
+      password: root.querySelector('#password').value,
     });
-    
-    if (error) {
-      showAlert(error.message, 'error');
-    }
+    setButtonBusy(submit, false, 'Sign in');
+    if (error) showAlert(error.message, 'error');
   });
+}
 
-  // Handle sign up link
-  const signupLink = document.getElementById('signup-link');
-  if (signupLink) {
-    signupLink.addEventListener('click', (e) => {
-      e.preventDefault();
-      renderSignupScreen();
-    });
-  }
-};
-
-export const renderSignupScreen = () => {
-  if (!authContainer || !appContainer) return;
-
-  authContainer.innerHTML = `
-    <div class="card auth-card">
-      <div class="card-header">
-        <span class="card-title">Family Vitals</span>
-      </div>
-      <div class="card-body">
-        <h2 class="form-title">Sign Up</h2>
-        
-        <p class="mb-4 text-center" id="registration-status">
-          Registration is currently <span id="reg-status-text">enabled</span>.
-        </p>
-        
-        <form id="signup-form" class="form-group">
-          <div class="form-group">
-            <label for="signup-email" class="form-label">Email address</label>
-            <input type="email" id="signup-email" class="form-input" placeholder="you@example.com" required>
-          </div>
-          
-          <div class="form-group">
-            <label for="signup-password" class="form-label">Password</label>
-            <input type="password" id="signup-password" class="form-input" placeholder="••••••••" required>
-          </div>
-          
-          <button type="submit" class="btn-primary btn-block">Create Account</button>
-        </form>
+function renderSignupScreen(root) {
+  root.innerHTML = `
+    <div class="auth-screen">
+      <div class="card auth-card">
+        <div class="card-header">
+          <span class="card-title">Family Vitals</span>
+        </div>
+        <div class="card-body">
+          <h2 class="form-title">Create account</h2>
+          <p class="mb-4 text-center muted" id="registration-status">Checking registration…</p>
+          <form id="signup-form">
+            <div class="form-group">
+              <label for="signup-name" class="form-label">Full name</label>
+              <input type="text" id="signup-name" class="form-input" placeholder="Your name" autocomplete="name" required>
+            </div>
+            <div class="form-group">
+              <label for="signup-email" class="form-label">Email</label>
+              <input type="email" id="signup-email" class="form-input" placeholder="you@example.com" autocomplete="username" required>
+            </div>
+            <div class="form-group">
+              <label for="signup-password" class="form-label">Password</label>
+              <input type="password" id="signup-password" class="form-input" placeholder="At least 6 characters" autocomplete="new-password" minlength="6" required>
+            </div>
+            <button type="submit" class="btn-primary btn-block" id="signup-submit">Create account</button>
+          </form>
+          <p class="mt-4 text-center muted">
+            Already have an account? <a href="#/login">Sign in</a>
+          </p>
+        </div>
       </div>
     </div>
   `;
 
-  // Check registration status
-  checkRegistrationStatus();
+  const status = root.querySelector('#registration-status');
+  const form = root.querySelector('#signup-form');
+  const submit = root.querySelector('#signup-submit');
+  const supabase = getSupabase();
+  warnIfDatabaseMissing(root);
 
-  // Handle sign up form
-  const signupForm = document.getElementById('signup-form');
-  signupForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const email = document.getElementById('signup-email').value;
-    const password = document.getElementById('signup-password').value;
-    
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
+  fetchRegistrationEnabled(supabase)
+    .then((enabled) => {
+      status.textContent = enabled
+        ? 'Registration is open.'
+        : 'Registration is currently disabled. Ask an administrator.';
+      submit.disabled = !enabled;
+    })
+    .catch((error) => {
+      status.textContent = setupErrorMessage(error);
     });
-    
-    if (error) {
-      if (error.message.includes('Registration disabled')) {
-        showAlert('Registration is currently disabled. Please contact an administrator.', 'error');
-      } else {
-        showAlert(error.message, 'error');
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    setButtonBusy(submit, true, 'Creating account…');
+    try {
+      const enabled = await fetchRegistrationEnabled(supabase);
+      if (!enabled) {
+        showAlert('Registration is currently disabled.', 'error');
+        return;
       }
+
+      const fullName = root.querySelector('#signup-name').value.trim();
+      const { data, error } = await supabase.auth.signUp({
+        email: root.querySelector('#signup-email').value.trim(),
+        password: root.querySelector('#signup-password').value,
+        options: {
+          data: { full_name: fullName },
+        },
+      });
+
+      if (error) {
+        showAlert(error.message, 'error');
+        return;
+      }
+
+      if (data.session) {
+        showAlert('Welcome to Family Vitals', 'success');
+        return;
+      }
+
+      showAlert('Check your email to confirm your account, then sign in.', 'info');
+      window.location.hash = '#/login';
+    } catch (error) {
+      showAlert(setupErrorMessage(error), 'error');
+    } finally {
+      setButtonBusy(submit, false, 'Create account');
     }
   });
-};
+}
 
-const checkRegistrationStatus = async () => {
-  try {
-    // In a real app, this would come from a global setting
-    // For now, we'll simulate based on Supabase auth configuration
-    const registrationEnabled = true; // This would be fetched from admin settings
-    const statusText = document.getElementById('reg-status-text');
-    if (statusText) {
-      statusText.textContent = registrationEnabled ? 'enabled' : 'disabled';
-    }
-  } catch (err) {
-    console.error('Error checking registration status:', err);
-  }
-};
+async function warnIfDatabaseMissing(root) {
+  const { error } = await getSupabase().from('profiles').select('id').limit(1);
+  if (!error || !isMissingRelation(error)) return;
+  const screen = root.querySelector('.auth-screen');
+  if (!screen || screen.querySelector('.setup-banner')) return;
+  const banner = document.createElement('div');
+  banner.className = 'card auth-card setup-banner';
+  banner.innerHTML =
+    '<p>The database tables are missing. In the Supabase SQL editor, run the files in <code>supabase/migrations</code> in order, then refresh this page.</p>';
+  screen.prepend(banner);
+}

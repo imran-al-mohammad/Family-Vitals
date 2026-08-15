@@ -1,198 +1,240 @@
-import { initSupabase } from '../services/supabaseClient.js';
-import { showAlert } from '../services/uiService.js';
+import { setButtonBusy, showAlert } from '../../services/uiService.js';
+import { escapeHtml } from '../../shared/html.js';
+import {
+  classifyReading,
+  formatDate,
+  formatReadingValue,
+  formatTypeLabel,
+} from '../../shared/format.js';
+import { fetchReadingsForUsers, setupErrorMessage } from '../../shared/api.js';
 
-export const renderReadingsUI = async (userId) => {
-  const supabase = initSupabase();
-  
-  // Form for adding new readings
-  const appContainer = document.getElementById('app-container');
-  if (!appContainer) return;
-  
-  const readingsSection = document.createElement('section');
-  readingsSection.className = 'readings-section';
-  
-  // Check if user has a family
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('family_id')
-    .eq('id', userId)
-    .single();
-  
-  readingsSection.innerHTML = `
-    <div class="section">
-      <h2 class="section-title">Log New Reading</h2>
-      <form id="reading-form" class="reading-form">
-        <input type="hidden" id="user-id" value="${userId}">
-        
-        <div class="form-group">
-          <label class="form-label">Reading Type</label>
-          <select id="reading-type" class="form-input" required>
-            <option value="bp">Blood Pressure</option>
-            <option value="pulse">Pulse (bpm)</option>
-            <option value="blood-sugar">Blood Sugar</option>
-          </select>
+export async function renderReadingsUI(root, { user, supabase }) {
+  root.innerHTML = `
+    <section class="view">
+      <header class="view-header">
+        <div>
+          <p class="eyebrow">Vitals</p>
+          <h1 class="view-title">Readings</h1>
         </div>
-        
-        <div id="bp-fields" class="form-group" style="display:none;">
+      </header>
+
+      <div class="card">
+        <h2 class="section-title">Log a reading</h2>
+        <form id="reading-form" class="reading-form">
           <div class="form-group">
-            <label class="form-label">Systolic (mmHg)</label>
-            <input type="number" id="systolic" class="form-input" min="60" max="250" required>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Diastolic (mmHg)</label>
-            <input type="number" id="diastolic" class="form-input" min="40" max="150" required>
-          </div>
-        </div>
-        
-        <div id="pulse-fields" class="form-group" style="display:none;">
-          <div class="form-group">
-            <label class="form-label">Pulse (bpm)</label>
-            <input type="number" id="pulse-value" class="form-input" min=40 max=200 required>
-          </div>
-        </div>
-        
-        <div id="sugar-fields" class="form-group" style="display:none;">
-          <div class="form-group">
-            <label class="form-label">Value</label>
-            <input type="number" id="sugar-value" class="form-input" min=50 max=500 required>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Unit</label>
-            <select id="sugar-unit" class="form-input">
-              <option value="mg/dL">mg/dL</option>
-              <option value="mmol/L">mmol/L</option>
+            <label class="form-label" for="reading-type">Type</label>
+            <select id="reading-type" class="form-input">
+              <option value="bp">Blood pressure</option>
+              <option value="pulse">Pulse</option>
+              <option value="blood-sugar">Blood sugar</option>
             </select>
           </div>
-          <div class="form-group">
-            <label class="form-label">Context</label>
-            <select id="sugar-context" class="form-input">
-              <option value="fasting">Fasting</option>
-              <option value="after-meal">After Meal</option>
-              <option value="random">Random</option>
-            </select>
+
+          <div id="bp-fields" class="field-set">
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label" for="systolic">Systolic (mmHg)</label>
+                <input type="number" id="systolic" class="form-input" min="60" max="250" inputmode="numeric">
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="diastolic">Diastolic (mmHg)</label>
+                <input type="number" id="diastolic" class="form-input" min="40" max="150" inputmode="numeric">
+              </div>
+            </div>
           </div>
-        </div>
-        
-        <div class="form-group">
-          <label class="form-label">Notes (optional)</label>
-          <textarea id="reading-notes" class="form-input" rows="2" placeholder="Any notes..."></textarea>
-        </div>
-        
-        <button type="submit" class="btn-primary btn-block">Log Reading</button>
-      </form>
-    </div>
-    
-    <div class="section" id="history-section">
-      <h2 class="section-title">Reading History</h2>
-      <div class="table">
-        <thead>
-          <tr>
-            <th>Type</th>
-            <th>Value</th>
-            <th>Date</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          <!-- Readings will be populated here -->
-        </tbody>
+
+          <div id="pulse-fields" class="field-set is-hidden">
+            <div class="form-group">
+              <label class="form-label" for="pulse-value">Pulse (bpm)</label>
+              <input type="number" id="pulse-value" class="form-input" min="40" max="200" inputmode="numeric">
+            </div>
+          </div>
+
+          <div id="sugar-fields" class="field-set is-hidden">
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label" for="sugar-value">Value</label>
+                <input type="number" id="sugar-value" class="form-input" min="1" max="500" step="0.1" inputmode="decimal">
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="sugar-unit">Unit</label>
+                <select id="sugar-unit" class="form-input">
+                  <option value="mg/dL">mg/dL</option>
+                  <option value="mmol/L">mmol/L</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="sugar-context">Context</label>
+              <select id="sugar-context" class="form-input">
+                <option value="fasting">Fasting</option>
+                <option value="after-meal">After meal</option>
+                <option value="random">Random</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="reading-notes">Notes (optional)</label>
+            <textarea id="reading-notes" class="form-input form-textarea" rows="2" maxlength="500" placeholder="Any notes…"></textarea>
+          </div>
+
+          <button type="submit" class="btn-primary" id="reading-submit">Log reading</button>
+        </form>
       </div>
-    </div>
-  `;
-  
-  // Handle form type change
-  const readingType = document.getElementById('reading-type');
-  readingType.addEventListener('change', (e) => {
-    const type = e.target.value;
-    document.getElementById('bp-fields').style.display = type === 'bp' ? 'block' : 'none';
-    document.getElementById('pulse-fields').style.display = type === 'pulse' ? 'block' : 'none';
-    document.getElementById('sugar-fields').style.display = type === 'blood-sugar' ? 'block' : 'none';
-  });
-  
-  // Handle form submission
-  const readingForm = document.getElementById('reading-form');
-  readingForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    
-    const type = readingType.value;
-    let data = { user_id: userId, type, created_at: new Date().toISOString() };
-    
-    if (type === 'bp') {
-      data = {
-        ...data,
-        systolic: parseInt(document.getElementById('systolic').value),
-        diastolic: parseInt(document.getElementById('diastolic').value),
-      };
-    } else if (type === 'pulse') {
-      data = {
-        ...data,
-        bpm: parseInt(document.getElementById('pulse-value').value),
-      };
-    } else if (type === 'blood-sugar') {
-      data = {
-        ...data,
-        value: parseFloat(document.getElementById('sugar-value').value),
-        unit: document.getElementById('sugar-unit').value,
-        context: document.getElementById('sugar-context').value,
-      };
-    }
-    
-    const { error } = await supabase
-      .from('readings')
-      .insert([data]);
-    
-    if (error) {
-      showAlert('Error logging reading: ' + error.message, 'error');
-    } else {
-      showAlert('Reading logged successfully!', 'success');
-      readingForm.reset();
-      // Refresh the history
-      renderReadingsHistory(userId);
-    }
-  });
-  
-  // Initial load - show BP fields by default
-  document.getElementById('reading-type').value = 'bp';
-  document.getElementById('bp-fields').style.display = 'block';
-  
-  // Load history
-  renderReadingsHistory(userId);
-};
 
-const renderReadingsHistory = async (userId) => {
-  const supabase = initSupabase();
-  
-  const { data: readings, error } = await supabase
-    .from('readings')
-    .select('*')
-    .eq('user_id', userId)
-    .order('created_at', { ascending: false });
-  
-  if (error) {
-    showAlert('Error loading history', 'error');
-    return;
+      <section class="section" id="history-section">
+        <h2 class="section-title">History</h2>
+        <p class="empty-state" id="history-status">Loading history…</p>
+        <div class="table-wrap is-hidden" id="history-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Type</th>
+                <th>Value</th>
+                <th>Date</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="history-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+  `;
+
+  const typeSelect = root.querySelector('#reading-type');
+  const form = root.querySelector('#reading-form');
+  const submit = root.querySelector('#reading-submit');
+
+  const toggleFields = () => {
+    const type = typeSelect.value;
+    root.querySelector('#bp-fields').classList.toggle('is-hidden', type !== 'bp');
+    root.querySelector('#pulse-fields').classList.toggle('is-hidden', type !== 'pulse');
+    root.querySelector('#sugar-fields').classList.toggle('is-hidden', type !== 'blood-sugar');
+  };
+
+  typeSelect.addEventListener('change', toggleFields);
+  toggleFields();
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const payload = buildReadingPayload(root, user.id);
+    if (payload.error) {
+      showAlert(payload.error, 'error');
+      return;
+    }
+
+    setButtonBusy(submit, true, 'Saving…');
+    const { error } = await supabase.from('readings').insert(payload.data);
+    setButtonBusy(submit, false, 'Log reading');
+
+    if (error) {
+      showAlert(setupErrorMessage(error), 'error');
+      return;
+    }
+
+    showAlert('Reading logged.', 'success');
+    form.reset();
+    typeSelect.value = 'bp';
+    toggleFields();
+    await renderHistory(root, supabase, user.id);
+  });
+
+  root.querySelector('#history-body').addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-delete-id]');
+    if (!button) return;
+    const id = button.getAttribute('data-delete-id');
+    if (!window.confirm('Delete this reading?')) return;
+    const { error } = await supabase.from('readings').delete().eq('id', id);
+    if (error) {
+      showAlert(setupErrorMessage(error), 'error');
+      return;
+    }
+    showAlert('Reading deleted.', 'success');
+    await renderHistory(root, supabase, user.id);
+  });
+
+  await renderHistory(root, supabase, user.id);
+}
+
+function buildReadingPayload(root, userId) {
+  const type = root.querySelector('#reading-type').value;
+  const notes = root.querySelector('#reading-notes').value.trim();
+  const data = { user_id: userId, type };
+  if (notes) data.notes = notes;
+
+  if (type === 'bp') {
+    const systolic = Number(root.querySelector('#systolic').value);
+    const diastolic = Number(root.querySelector('#diastolic').value);
+    if (!systolic || !diastolic) return { error: 'Enter both systolic and diastolic values.' };
+    if (systolic < 60 || systolic > 250) return { error: 'Systolic must be between 60 and 250.' };
+    if (diastolic < 40 || diastolic > 150) return { error: 'Diastolic must be between 40 and 150.' };
+    if (systolic <= diastolic) return { error: 'Systolic must be greater than diastolic.' };
+    data.systolic = systolic;
+    data.diastolic = diastolic;
+    return { data };
   }
-  
-  const tbody = document.querySelector('#history-section tbody');
-  if (!tbody) return;
-  
-  if (!readings || readings.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="4" class="empty-state">No readings yet. Log your first reading above!</td></tr>`;
-    return;
+
+  if (type === 'pulse') {
+    const bpm = Number(root.querySelector('#pulse-value').value);
+    if (!bpm) return { error: 'Enter a pulse value.' };
+    if (bpm < 40 || bpm > 200) return { error: 'Pulse must be between 40 and 200 bpm.' };
+    data.bpm = bpm;
+    return { data };
   }
-  
-  tbody.innerHTML = readings.map((reading, index) => {
-    const value = reading.value || `${reading.systolic}/${reading.diastolic}` || reading.bpm || reading.value;
-    const typeLabel = reading.type === 'bp' ? 'BP' : reading.type === 'pulse' ? 'Pulse' : 'Sugar';
-    const date = new Date(reading.created_at).toLocaleDateString();
-    
-    return `
-      <tr>
-        <td class="type-${reading.type}">${typeLabel}</td>
-        <td>${value}</td>
-        <td>${date}</td>
-        <td></td>
-      </tr>
-    `;
-  }).join('');
-};
+
+  if (type === 'blood-sugar') {
+    const value = Number(root.querySelector('#sugar-value').value);
+    const unit = root.querySelector('#sugar-unit').value;
+    const context = root.querySelector('#sugar-context').value;
+    if (!value) return { error: 'Enter a blood sugar value.' };
+    const mgDl = unit === 'mmol/L' ? value * 18 : value;
+    if (mgDl < 50 || mgDl > 500) return { error: 'Blood sugar is outside the accepted range.' };
+    data.value = value;
+    data.unit = unit;
+    data.context = context;
+    return { data };
+  }
+
+  return { error: 'Choose a reading type.' };
+}
+
+async function renderHistory(root, supabase, userId) {
+  const status = root.querySelector('#history-status');
+  const wrap = root.querySelector('#history-wrap');
+  const body = root.querySelector('#history-body');
+
+  try {
+    const readings = await fetchReadingsForUsers(supabase, [userId], 200);
+    if (readings.length === 0) {
+      wrap.classList.add('is-hidden');
+      status.classList.remove('is-hidden');
+      status.textContent = 'No readings yet. Log your first reading above.';
+      return;
+    }
+
+    status.classList.add('is-hidden');
+    wrap.classList.remove('is-hidden');
+    body.innerHTML = readings
+      .map((reading) => {
+        const statusChip = classifyReading(reading);
+        return `
+          <tr>
+            <td>${escapeHtml(formatTypeLabel(reading.type))}</td>
+            <td>
+              ${escapeHtml(formatReadingValue(reading))}
+              <span class="status-chip ${statusChip.key}">${escapeHtml(statusChip.label)}</span>
+            </td>
+            <td>${escapeHtml(formatDate(reading.created_at))}</td>
+            <td><button type="button" class="btn-text" data-delete-id="${escapeHtml(reading.id)}">Delete</button></td>
+          </tr>
+        `;
+      })
+      .join('');
+  } catch (error) {
+    wrap.classList.add('is-hidden');
+    status.classList.remove('is-hidden');
+    status.textContent = setupErrorMessage(error);
+  }
+}

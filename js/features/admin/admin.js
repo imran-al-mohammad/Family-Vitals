@@ -1,154 +1,193 @@
-import { initSupabase } from '../services/supabaseClient.js';
-import { showAlert } from '../services/uiService.js';
+import { setButtonBusy, showAlert } from '../../services/uiService.js';
+import { escapeHtml } from '../../shared/html.js';
+import { isMissingRelation, setupErrorMessage } from '../../shared/api.js';
 
-export const renderAdminUI = () => {
-  const appContainer = document.getElementById('app-container');
-  if (!appContainer) return;
-  
-  appContainer.innerHTML = `
-    <div class="admin-panel">
-      <h1 class="admin-title">Admin Panel</h1>
-      
-      <div class="admin-section">
-        <h2 class="section-title">Registration Control</h2>
-        <div class="form-group">
-          <label class="form-label">Registration Enabled</label>
-          <select id="registration-status" class="form-input">
-            <option value="true">Enabled</option>
-            <option value="false">Disabled</option>
-          </select>
-          <button id="toggle-registration" class="btn-secondary">Apply</button>
-        </div>
-      </div>
-      
-      <div class="admin-section">
-        <h2 class="section-title">User Management</h2>
-        <div class="form-group">
-          <label class="form-label">New User Email</label>
-          <input type="email" id="new-user-email" class="form-input" placeholder="user@example.com">
-        </div>
-        <button id="create-user-btn" class="btn-primary">Create User</button>
-      </div>
-      
-      <div class="admin-section">
-        <h2 class="section-title">Family Management</h2>
-        <div class="form-group">
-          <label class="form-label">Create New Family</label>
-          <input type="text" id="new-family-name" class="form-input" placeholder="Family name">
-        </div>
-        <button id="create-family-btn" class="btn-primary">Create Family</button>
-      </div>
-      
-      <div class="admin-section">
-        <h2 class="section-title">Assign Members</h2>
-        <form id="assign-family-form" class="form-group">
-          <label class="form-label">Select User</label>
-          <select id="assign-user-select" class="form-input">
-            <!-- Users will be populated -->
-          </select>
-          <label class="form-label">Select Family</label>
-          <select id="assign-family-select" class="form-input">
-            <!-- Families will be populated -->
-          </select>
-          <button type="submit" class="btn-primary">Assign</button>
-        </form>
-      </div>
-    </div>
-  `;
-  
-  // Load users and families
-  loadUsersAndFamilies();
-  
-  // Toggle registration
-  const toggleBtn = document.getElementById('toggle-registration');
-  if (toggleBtn) {
-    toggleBtn.addEventListener('click', async () => {
-      const status = document.getElementById('registration-status').value;
-      // In a real app, this would update a global setting
-      showAlert(`Registration ${status === 'true' ? 'enabled' : 'disabled'}`, 'success');
-    });
-  }
-  
-  // Create user
-  const createUserBtn = document.getElementById('create-user-btn');
-  if (createUserBtn) {
-    createUserBtn.addEventListener('click', async () => {
-      const email = document.getElementById('new-user-email').value;
-      if (!email) {
-        showAlert('Please enter an email address', 'error');
-        return;
-      }
-      
-      try {
-        const { error } = await supabase.auth.admin.createUser({
-          email,
-          email_confirm: true,
-        });
-        
-        if (error) {
-          showAlert('Error creating user: ' + error.message, 'error');
-        } else {
-          showAlert('User created successfully!', 'success');
-          loadUsersAndFamilies();
-        }
-      } catch (err) {
-        showAlert('Error creating user: ' + err.message, 'error');
-      }
-    });
-  }
-  
-  // Assign family form
-  const assignFamilyForm = document.getElementById('assign-family-form');
-  if (assignFamilyForm) {
-    assignFamilyForm.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const userId = document.getElementById('assign-user-select').value;
-      const familyId = document.getElementById('assign-family-select').value;
-      
-      if (!userId || !familyId) {
-        showAlert('Please select both user and family', 'error');
-        return;
-      }
-      
-      try {
-        const { error } = await supabase
-          .from('family_members')
-          .insert([{ user_id: userId, family_id: familyId }]);
-        
-        if (error) {
-          showAlert('Error assigning member: ' + error.message, 'error');
-        } else {
-          showAlert('Member assigned successfully!', 'success');
-          loadUsersAndFamilies();
-        }
-      } catch (err) {
-        showAlert('Error assigning member: ' + err.message, 'error');
-      }
-    });
-  }
-};
+export async function renderAdminUI(root, { supabase }) {
+  root.innerHTML = `<p class="empty-state">Loading admin…</p>`;
 
-const loadUsersAndFamilies = async () => {
-  const supabase = initSupabase();
-  
   try {
-    const { data: users } = await supabase.auth.admin.listUsers();
-    const userSelect = document.getElementById('assign-user-select');
-    if (userSelect) {
-      userSelect.innerHTML = users.users
-        .filter(u => u.id !== supabase.auth.getUser().id) // Don't show current user
-        .map(u => `<option value="${u.id}">${u.email}</option>`)
-        .join('');
-    }
-    
-    // Load families - would need a families table
-    // const { data: families } = await supabase.from('families').select('*');
-    // const familySelect = document.getElementById('assign-family-select');
-    // if (familySelect) {
-    //   familySelect.innerHTML = families.map(f => `<option value="${f.id}">${f.name}</option>`).join('');
-    // }
-    
-  } catch (err) {
-    console.error('Error loading users/families:', err);
+    const [{ data: settings }, { data: users, error: usersError }, { data: families, error: familiesError }] =
+      await Promise.all([
+        supabase.from('app_settings').select('key, value'),
+        supabase
+          .from('profiles')
+          .select('id, full_name, email, family_id, is_super_admin')
+          .order('full_name', { ascending: true }),
+        supabase.from('families').select('id, name').order('name', { ascending: true }),
+      ]);
+
+    if (usersError) throw usersError;
+    if (familiesError) throw familiesError;
+
+    const registrationEnabled = (settings || []).find((row) => row.key === 'registration_enabled')?.value !== 'false';
+    const familyName = Object.fromEntries((families || []).map((family) => [family.id, family.name]));
+
+    root.innerHTML = `
+      <section class="view">
+        <header class="view-header">
+          <div>
+            <p class="eyebrow">Administration</p>
+            <h1 class="view-title">Admin</h1>
+          </div>
+        </header>
+
+        <div class="admin-grid">
+          <section class="card admin-section">
+            <h2 class="section-title">Registration</h2>
+            <p class="muted mb-4">This only hides sign-up in the app. Turn off sign-ups in the Supabase Auth settings to block them completely.</p>
+            <div class="form-group">
+              <label class="form-label" for="registration-status">New accounts</label>
+              <select id="registration-status" class="form-input">
+                <option value="true" ${registrationEnabled ? 'selected' : ''}>Enabled</option>
+                <option value="false" ${registrationEnabled ? '' : 'selected'}>Disabled</option>
+              </select>
+            </div>
+            <button type="button" class="btn-secondary" id="toggle-registration">Save</button>
+          </section>
+
+          <section class="card admin-section">
+            <h2 class="section-title">Create family</h2>
+            <form id="create-family-admin-form">
+              <div class="form-group">
+                <label class="form-label" for="new-family-name">Family name</label>
+                <input type="text" id="new-family-name" class="form-input" placeholder="Family name" maxlength="80" required>
+              </div>
+              <button type="submit" class="btn-primary" id="create-family-btn">Create family</button>
+            </form>
+          </section>
+
+          <section class="card admin-section">
+            <h2 class="section-title">Assign member</h2>
+            <form id="assign-family-form">
+              <div class="form-group">
+                <label class="form-label" for="assign-user-select">User</label>
+                <select id="assign-user-select" class="form-input" required>
+                  ${(users || [])
+                    .map(
+                      (person) =>
+                        `<option value="${escapeHtml(person.id)}">${escapeHtml(person.full_name || person.email || person.id)}</option>`,
+                    )
+                    .join('')}
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="assign-family-select">Family</label>
+                <select id="assign-family-select" class="form-input" required>
+                  ${(families || [])
+                    .map((family) => `<option value="${escapeHtml(family.id)}">${escapeHtml(family.name)}</option>`)
+                    .join('')}
+                </select>
+              </div>
+              <button type="submit" class="btn-primary" id="assign-submit">Assign</button>
+            </form>
+          </section>
+        </div>
+
+        <section class="section">
+          <h2 class="section-title">People</h2>
+          ${
+            !users?.length
+              ? `<p class="empty-state">No profiles yet.</p>`
+              : `<div class="table-wrap"><table class="table">
+                  <thead><tr><th>Name</th><th>Email</th><th>Family</th><th>Role</th></tr></thead>
+                  <tbody>
+                    ${users
+                      .map(
+                        (person) => `
+                          <tr>
+                            <td>${escapeHtml(person.full_name || '—')}</td>
+                            <td>${escapeHtml(person.email || '—')}</td>
+                            <td>${escapeHtml(familyName[person.family_id] || 'Unassigned')}</td>
+                            <td>${person.is_super_admin ? 'Admin' : 'Member'}</td>
+                          </tr>`,
+                      )
+                      .join('')}
+                  </tbody>
+                </table></div>`
+          }
+        </section>
+      </section>
+    `;
+
+    bindAdminEvents(root, supabase, { users, families });
+  } catch (error) {
+    root.innerHTML = `<p class="empty-state">${escapeHtml(setupErrorMessage(error))}</p>`;
+    showAlert(setupErrorMessage(error), 'error');
   }
-};
+}
+
+function bindAdminEvents(root, supabase, { users, families }) {
+  const toggleBtn = root.querySelector('#toggle-registration');
+  toggleBtn.addEventListener('click', async () => {
+    const value = root.querySelector('#registration-status').value;
+    setButtonBusy(toggleBtn, true, 'Saving…');
+    const { error } = await supabase
+      .from('app_settings')
+      .upsert({ key: 'registration_enabled', value }, { onConflict: 'key' });
+    setButtonBusy(toggleBtn, false, 'Save');
+    if (error) {
+      showAlert(setupErrorMessage(error), 'error');
+      return;
+    }
+    showAlert(value === 'true' ? 'Registration enabled.' : 'Registration disabled in the app.', 'success');
+  });
+
+  const createForm = root.querySelector('#create-family-admin-form');
+  const createBtn = root.querySelector('#create-family-btn');
+  createForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const name = root.querySelector('#new-family-name').value.trim();
+    setButtonBusy(createBtn, true, 'Creating…');
+    const { error } = await supabase.from('families').insert({ name });
+    setButtonBusy(createBtn, false, 'Create family');
+    if (error) {
+      showAlert(setupErrorMessage(error), 'error');
+      return;
+    }
+    showAlert('Family created.', 'success');
+    await renderAdminUI(root, { supabase });
+  });
+
+  const assignForm = root.querySelector('#assign-family-form');
+  const assignBtn = root.querySelector('#assign-submit');
+  if (!users?.length || !families?.length) {
+    assignBtn.disabled = true;
+  }
+
+  assignForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const userId = root.querySelector('#assign-user-select').value;
+    const familyId = root.querySelector('#assign-family-select').value;
+    if (!userId || !familyId) {
+      showAlert('Select a user and a family.', 'error');
+      return;
+    }
+
+    setButtonBusy(assignBtn, true, 'Assigning…');
+    try {
+      const rpc = await supabase.rpc('assign_user_to_family', {
+        target_user: userId,
+        target_family: familyId,
+      });
+      if (rpc.error && !isMissingRelation(rpc.error)) throw rpc.error;
+
+      if (rpc.error) {
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .update({ family_id: familyId })
+          .eq('id', userId);
+        if (profileError) throw profileError;
+        const { error: memberError } = await supabase
+          .from('family_members')
+          .insert({ user_id: userId, family_id: familyId, role: 'member' });
+        if (memberError && memberError.code !== '23505') throw memberError;
+      }
+
+      showAlert('Member assigned.', 'success');
+      await renderAdminUI(root, { supabase });
+    } catch (error) {
+      showAlert(setupErrorMessage(error), 'error');
+      setButtonBusy(assignBtn, false, 'Assign');
+    }
+  });
+}

@@ -198,8 +198,19 @@ if __name__ == "__main__":
                 print(f"Warnings: {', '.join(result['warnings'])}")
             sys.exit(0)
         elif isinstance(reading, list):
-            validate_file(input_arg)
-            sys.exit(0)
+            print(f"Validating {len(reading)} readings from JSON argument...\n")
+            valid_count = 0
+            invalid_count = 0
+            for i, item in enumerate(reading):
+                result = validate_reading(item)
+                if result["is_valid"]:
+                    valid_count += 1
+                else:
+                    invalid_count += 1
+                    print(f"  Reading {i}: {', '.join(result['errors'])}")
+            print(f"Valid: {valid_count}")
+            print(f"Invalid: {invalid_count}")
+            sys.exit(0 if invalid_count == 0 else 1)
     except json.JSONDecodeError:
         pass
     

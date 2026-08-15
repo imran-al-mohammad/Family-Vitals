@@ -2,6 +2,7 @@ import { setButtonBusy, showAlert } from '../../services/uiService.js';
 import { escapeHtml } from '../../shared/html.js';
 import {
   classifyReading,
+  formatDate,
   formatReadingValue,
   formatTypeLabel,
   getInitials,
@@ -14,6 +15,11 @@ import {
   fetchReadingsForUsers,
   setupErrorMessage,
 } from '../../shared/api.js';
+import {
+  alertsForPerson,
+  buildAlerts,
+  groupReadingsByUser,
+} from '../../shared/insights.js';
 
 export async function renderFamilyView(root, ctx) {
   const { user, supabase } = ctx;
@@ -33,9 +39,11 @@ export async function renderFamilyView(root, ctx) {
     const readings = await fetchReadingsForUsers(
       supabase,
       members.map((member) => member.id),
-      200,
+      400,
     );
+    const readingsByUser = groupReadingsByUser(readings);
     const byUser = groupLatest(readings);
+    const alerts = buildAlerts(members, readingsByUser, { currentUserId: user.id });
 
     const { data: family } = await supabase
       .from('families')
@@ -54,7 +62,16 @@ export async function renderFamilyView(root, ctx) {
         ${
           members.length === 0
             ? `<p class="empty-state">No family members found.</p>`
-            : `<div class="family-grid">${members.map((member) => memberCard(member, byUser[member.id] || {})).join('')}</div>`
+            : `<div class="family-grid">${members
+                .map((member) =>
+                  memberCard(
+                    member,
+                    byUser[member.id] || {},
+                    readingsByUser[member.id] || [],
+                    alertsForPerson(alerts, member.id),
+                  ),
+                )
+                .join('')}</div>`
         }
       </section>
     `;
@@ -117,8 +134,10 @@ function groupLatest(readings) {
   return latest;
 }
 
-function memberCard(member, latest) {
+function memberCard(member, latest, history, alerts) {
   const name = member.full_name || member.email || 'Unknown';
+  const recent = (history || []).slice(0, 4);
+  const topAlert = alerts?.[0];
   return `
     <article class="family-card">
       <div class="family-card-head">
@@ -135,10 +154,38 @@ function memberCard(member, latest) {
         </div>
         <a href="#/readings?member=${encodeURIComponent(member.id)}" class="text-link family-card-action">Log reading</a>
       </div>
+      ${
+        topAlert
+          ? `<p class="history-alert"><span class="status-chip ${topAlert.severity}">${topAlert.severity === 'danger' ? 'Alert' : 'Watch'}</span> <span class="muted">${escapeHtml(topAlert.title)}</span></p>`
+          : ''
+      }
       <div class="latest-readings-preview">
         ${previewRow('bp', latest.bp)}
         ${previewRow('pulse', latest.pulse)}
         ${previewRow('blood-sugar', latest['blood-sugar'])}
+      </div>
+      <div class="member-history">
+        <div class="section-heading">
+          <h3 class="mini-title">History</h3>
+          <a href="#/readings?member=${encodeURIComponent(member.id)}" class="text-link">All</a>
+        </div>
+        ${
+          recent.length === 0
+            ? `<p class="muted">No readings yet.</p>`
+            : `<ul class="history-mini">
+                ${recent
+                  .map((reading) => {
+                    const status = classifyReading(reading);
+                    return `<li>
+                      <span>${escapeHtml(formatTypeLabel(reading.type))}</span>
+                      <span>${escapeHtml(formatReadingValue(reading).split(' · ')[0])}</span>
+                      <span class="status-chip ${status.key}">${escapeHtml(status.label)}</span>
+                      <span class="muted">${escapeHtml(formatDate(reading.created_at))}</span>
+                    </li>`;
+                  })
+                  .join('')}
+              </ul>`
+        }
       </div>
     </article>
   `;

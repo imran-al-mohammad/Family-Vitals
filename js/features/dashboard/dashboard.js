@@ -13,22 +13,33 @@ import {
   fetchReadingsForUsers,
   setupErrorMessage,
 } from '../../shared/api.js';
+import {
+  alertsForPerson,
+  buildAlerts,
+  buildPersonInsights,
+  groupReadingsByUser,
+  personName,
+} from '../../shared/insights.js';
 
 export async function renderDashboard(root, { user, profile, supabase }) {
   root.innerHTML = `<p class="empty-state">Loading dashboard…</p>`;
 
   try {
-    const [ownReadings, members] = await Promise.all([
-      fetchReadingsForUsers(supabase, [user.id], 50),
-      fetchFamilyMembers(supabase, profile?.family_id),
-    ]);
-
+    const members = await fetchFamilyMembers(supabase, profile?.family_id);
+    const people = peopleForDashboard(user, profile, members);
+    const allReadings = await fetchReadingsForUsers(
+      supabase,
+      people.map((person) => person.id),
+      500,
+    );
+    const readingsByUser = groupReadingsByUser(allReadings);
+    const ownReadings = readingsByUser[user.id] || [];
     const latest = latestByType(ownReadings);
-    const memberIds = members.map((member) => member.id).filter((id) => id !== user.id);
-    const familyReadings = memberIds.length
-      ? await fetchReadingsForUsers(supabase, memberIds, 80)
-      : [];
-    const familyLatest = latestByType(familyReadings);
+    const insights = buildPersonInsights(ownReadings);
+    const alerts = buildAlerts(people, readingsByUser, { currentUserId: user.id });
+    const weekHousehold = allReadings.filter(
+      (reading) => Date.now() - new Date(reading.created_at).getTime() <= 7 * 24 * 60 * 60 * 1000,
+    ).length;
 
     root.innerHTML = `
       <section class="view">
@@ -40,6 +51,8 @@ export async function renderDashboard(root, { user, profile, supabase }) {
           <a href="#/readings" class="btn-primary">Log reading</a>
         </header>
 
+        ${alertsSection(alerts)}
+
         <div class="metric-grid">
           ${metricCard('bp', latest.bp)}
           ${metricCard('pulse', latest.pulse)}
@@ -48,10 +61,33 @@ export async function renderDashboard(root, { user, profile, supabase }) {
 
         <section class="section">
           <div class="section-heading">
+            <h2 class="section-title">Insights</h2>
+            <p class="muted">${insights.weekCount} reading${insights.weekCount === 1 ? '' : 's'} this week</p>
+          </div>
+          <div class="metric-grid">
+            ${insightCard('Blood pressure', insights.types.bp, '7-day average')}
+            ${insightCard('Pulse', insights.types.pulse, '7-day average')}
+            ${insightCard('Blood sugar', insights.types['blood-sugar'], '7-day average')}
+            ${countCard(insights, weekHousehold, people.length)}
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-heading">
             <h2 class="section-title">Family</h2>
             <a href="#/family" class="text-link">Open family</a>
           </div>
-          ${familySummary(profile, members, familyLatest, user.id)}
+          ${familySummary(profile, people, user.id, alerts)}
+        </section>
+
+        <section class="section">
+          <div class="section-heading">
+            <h2 class="section-title">History</h2>
+            <a href="#/readings" class="text-link">Log or edit</a>
+          </div>
+          <div class="history-grid">
+            ${people.map((person) => historyCard(person, readingsByUser[person.id] || [], user.id, alerts)).join('')}
+          </div>
         </section>
       </section>
     `;
@@ -59,6 +95,56 @@ export async function renderDashboard(root, { user, profile, supabase }) {
     root.innerHTML = `<p class="empty-state">${escapeHtml(setupErrorMessage(error))}</p>`;
     showAlert(setupErrorMessage(error), 'error');
   }
+}
+
+function peopleForDashboard(user, profile, members) {
+  const list = [...(members || [])];
+  if (!list.some((person) => person.id === user.id)) {
+    list.unshift({
+      id: user.id,
+      full_name: profile?.full_name || user.user_metadata?.full_name || '',
+      email: user.email,
+    });
+  }
+  return list.sort((a, b) => {
+    if (a.id === user.id) return -1;
+    if (b.id === user.id) return 1;
+    return String(a.full_name || a.email || '').localeCompare(String(b.full_name || b.email || ''));
+  });
+}
+
+function alertsSection(alerts) {
+  if (!alerts.length) return '';
+  return `
+    <section class="card alerts-card">
+      <h2 class="section-title">Alerts</h2>
+      <ul class="alert-list">
+        ${alerts
+          .map(
+            (alert) => `
+              <li class="alert-item">
+                <span class="status-chip ${alert.severity}">${escapeHtml(severityLabel(alert.severity))}</span>
+                <div>
+                  <p class="alert-title">${escapeHtml(alert.title)}</p>
+                  <p class="muted">${escapeHtml(alert.detail)}</p>
+                </div>
+                ${
+                  alert.personId
+                    ? `<a href="#/readings?member=${encodeURIComponent(alert.personId)}" class="text-link">Review</a>`
+                    : ''
+                }
+              </li>`,
+          )
+          .join('')}
+      </ul>
+    </section>
+  `;
+}
+
+function severityLabel(severity) {
+  if (severity === 'danger') return 'Alert';
+  if (severity === 'warning') return 'Watch';
+  return 'Note';
 }
 
 function metricCard(type, reading) {
@@ -78,27 +164,106 @@ function metricCard(type, reading) {
   `;
 }
 
-function familySummary(profile, members, familyLatest, userId) {
+function insightCard(title, series, caption) {
+  const value = series?.avg?.label || '—';
+  const unit = series?.avg?.unit || '';
+  const trend = series?.trend;
+  return `
+    <article class="metric-card">
+      <p class="metric-label">${escapeHtml(title)}</p>
+      <p class="metric-value">${escapeHtml(value)}</p>
+      <p class="metric-label">${escapeHtml(unit)}</p>
+      <p class="metric-meta">${escapeHtml(caption)}</p>
+      ${
+        trend
+          ? `<span class="status-chip ${trend.key === 'rising' ? 'warning' : 'unknown'}">${escapeHtml(trend.label)}</span>`
+          : `<span class="status-chip unknown">Need more data</span>`
+      }
+    </article>
+  `;
+}
+
+function countCard(insights, householdWeek, householdSize) {
+  return `
+    <article class="metric-card">
+      <p class="metric-label">Activity</p>
+      <p class="metric-value">${insights.weekCount}</p>
+      <p class="metric-label">your readings this week</p>
+      <p class="metric-meta">${insights.monthCount} in 30 days${
+        householdSize > 1 ? ` · ${householdWeek} household this week` : ''
+      }</p>
+    </article>
+  `;
+}
+
+function familySummary(profile, people, userId, alerts) {
   if (!profile?.family_id) {
     return `<p class="empty-state">You are not in a family yet. <a href="#/family">Create one</a> or ask an admin to assign you.</p>`;
   }
 
-  const others = members.filter((member) => member.id !== userId);
+  const others = people.filter((person) => person.id !== userId);
   if (others.length === 0) {
     return `<p class="empty-state">No other family members yet. An admin can assign people from the admin panel.</p>`;
   }
 
-  const chips = ['bp', 'pulse', 'blood-sugar']
-    .map((type) => {
-      const reading = familyLatest[type];
-      if (!reading) return '';
-      return `<span class="status-chip ${classifyReading(reading).key}">${escapeHtml(formatTypeLabel(type))}: ${escapeHtml(formatReadingValue(reading).split(' · ')[0])}</span>`;
-    })
-    .filter(Boolean)
-    .join('');
+  const danger = alerts.filter((alert) => alert.severity === 'danger').length;
+  const watch = alerts.filter((alert) => alert.severity === 'warning').length;
 
   return `
     <p class="muted">${others.length} other member${others.length === 1 ? '' : 's'} in your family.</p>
-    <div class="chip-row">${chips || '<span class="muted">No family readings yet.</span>'}</div>
+    <div class="chip-row">
+      ${
+        danger
+          ? `<span class="status-chip danger">${danger} alert${danger === 1 ? '' : 's'}</span>`
+          : ''
+      }
+      ${
+        watch
+          ? `<span class="status-chip warning">${watch} to watch</span>`
+          : ''
+      }
+      ${!danger && !watch ? `<span class="status-chip success">No household alerts</span>` : ''}
+    </div>
+  `;
+}
+
+function historyCard(person, readings, currentUserId, alerts) {
+  const name = personName(person, currentUserId);
+  const recent = readings.slice(0, 6);
+  const personAlerts = alertsForPerson(alerts, person.id);
+  const top = personAlerts[0];
+
+  return `
+    <article class="family-card history-card">
+      <div class="family-card-head">
+        <div>
+          <p class="family-name">${escapeHtml(name)}</p>
+          <p class="muted">${readings.length} saved reading${readings.length === 1 ? '' : 's'}</p>
+        </div>
+        <a href="#/readings?member=${encodeURIComponent(person.id)}" class="text-link family-card-action">Full history</a>
+      </div>
+      ${
+        top
+          ? `<p class="history-alert"><span class="status-chip ${top.severity}">${escapeHtml(severityLabel(top.severity))}</span> <span class="muted">${escapeHtml(top.title)}</span></p>`
+          : ''
+      }
+      ${
+        recent.length === 0
+          ? `<p class="empty-state">No history yet.</p>`
+          : `<ul class="history-mini">
+              ${recent
+                .map((reading) => {
+                  const status = classifyReading(reading);
+                  return `<li>
+                    <span>${escapeHtml(formatTypeLabel(reading.type))}</span>
+                    <span>${escapeHtml(formatReadingValue(reading).split(' · ')[0])}</span>
+                    <span class="status-chip ${status.key}">${escapeHtml(status.label)}</span>
+                    <span class="muted">${escapeHtml(formatDate(reading.created_at))}</span>
+                  </li>`;
+                })
+                .join('')}
+            </ul>`
+      }
+    </article>
   `;
 }

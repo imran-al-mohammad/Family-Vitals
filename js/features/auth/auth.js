@@ -30,9 +30,7 @@ function renderSigninScreen(root) {
             </div>
             <button type="submit" class="btn-primary btn-block" id="signin-submit">Sign in</button>
           </form>
-          <p class="mt-4 text-center muted">
-            Don't have an account? <a href="#/signup">Sign up</a>
-          </p>
+          <p class="mt-4 text-center muted is-hidden" id="signup-prompt"></p>
         </div>
       </div>
     </div>
@@ -40,7 +38,19 @@ function renderSigninScreen(root) {
 
   const form = root.querySelector('#signin-form');
   const submit = root.querySelector('#signin-submit');
+  const signupPrompt = root.querySelector('#signup-prompt');
   warnIfDatabaseMissing(root);
+
+  fetchRegistrationEnabled(getSupabase())
+    .then((enabled) => {
+      if (!enabled || !signupPrompt) return;
+      signupPrompt.classList.remove('is-hidden');
+      signupPrompt.innerHTML = `Don't have an account? <a href="#/signup">Sign up</a>`;
+    })
+    .catch(() => {
+      // Leave sign-up hidden if the setting cannot be read.
+    });
+
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const supabase = getSupabase();
@@ -54,7 +64,48 @@ function renderSigninScreen(root) {
   });
 }
 
-function renderSignupScreen(root) {
+async function renderSignupScreen(root) {
+  root.innerHTML = `
+    <div class="auth-screen">
+      <div class="card auth-card">
+        <div class="card-body">
+          <h2 class="form-title">Create account</h2>
+          <p class="empty-state">Checking registration…</p>
+        </div>
+      </div>
+    </div>
+  `;
+  warnIfDatabaseMissing(root);
+
+  let enabled = false;
+  try {
+    enabled = await fetchRegistrationEnabled(getSupabase());
+  } catch (error) {
+    const status = root.querySelector('.empty-state');
+    if (status) status.textContent = setupErrorMessage(error);
+    return;
+  }
+
+  if (!(window.location.hash || '').includes('signup')) return;
+
+  if (!enabled) {
+    root.innerHTML = `
+      <div class="auth-screen">
+        <div class="card auth-card">
+          <div class="card-header">
+            <span class="card-title">Family Vitals</span>
+          </div>
+          <div class="card-body">
+            <h2 class="form-title">Registration closed</h2>
+            <p class="mb-4 text-center muted">New accounts are disabled. Ask an administrator to add you.</p>
+            <p class="text-center muted"><a href="#/login">Back to sign in</a></p>
+          </div>
+        </div>
+      </div>
+    `;
+    return;
+  }
+
   root.innerHTML = `
     <div class="auth-screen">
       <div class="card auth-card">
@@ -63,7 +114,7 @@ function renderSignupScreen(root) {
         </div>
         <div class="card-body">
           <h2 class="form-title">Create account</h2>
-          <p class="mb-4 text-center muted" id="registration-status">Checking registration…</p>
+          <p class="mb-4 text-center muted" id="registration-status">Registration is open.</p>
           <form id="signup-form">
             <div class="form-group">
               <label for="signup-name" class="form-label">Full name</label>
@@ -87,22 +138,10 @@ function renderSignupScreen(root) {
     </div>
   `;
 
-  const status = root.querySelector('#registration-status');
   const form = root.querySelector('#signup-form');
   const submit = root.querySelector('#signup-submit');
   const supabase = getSupabase();
   warnIfDatabaseMissing(root);
-
-  fetchRegistrationEnabled(supabase)
-    .then((enabled) => {
-      status.textContent = enabled
-        ? 'Registration is open.'
-        : 'Registration is currently disabled. Ask an administrator.';
-      submit.disabled = !enabled;
-    })
-    .catch((error) => {
-      status.textContent = setupErrorMessage(error);
-    });
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();

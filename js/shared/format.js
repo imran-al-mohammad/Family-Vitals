@@ -61,10 +61,24 @@ export function readingUnit(reading) {
   return '';
 }
 
-function sugarToMgDl(reading) {
-  const value = Number(reading.value);
+export function sugarToMgDl(reading) {
+  const value = Number(reading?.value);
   if (Number.isNaN(value)) return null;
   return reading.unit === 'mmol/L' ? value * 18 : value;
+}
+
+export function numericValue(reading) {
+  if (!reading) return null;
+  if (reading.type === 'bp') {
+    const value = Number(reading.systolic);
+    return Number.isNaN(value) ? null : value;
+  }
+  if (reading.type === 'pulse') {
+    const value = Number(reading.bpm);
+    return Number.isNaN(value) ? null : value;
+  }
+  if (reading.type === 'blood-sugar') return sugarToMgDl(reading);
+  return null;
 }
 
 export function classifyReading(reading) {
@@ -83,21 +97,24 @@ export function classifyReading(reading) {
   if (reading.type === 'pulse') {
     const bpm = Number(reading.bpm);
     if (Number.isNaN(bpm)) return { key: 'unknown', label: 'No data' };
-    if (bpm < 50 || bpm > 120) return { key: 'danger', label: 'High' };
-    if (bpm < 60 || bpm > 100) return { key: 'warning', label: 'Elevated' };
+    if (bpm < 50) return { key: 'danger', label: 'Low' };
+    if (bpm > 120) return { key: 'danger', label: 'High' };
+    if (bpm < 60) return { key: 'warning', label: 'Low' };
+    if (bpm > 100) return { key: 'warning', label: 'Elevated' };
     return { key: 'success', label: 'Normal' };
   }
 
   if (reading.type === 'blood-sugar') {
     const mgDl = sugarToMgDl(reading);
     if (mgDl == null) return { key: 'unknown', label: 'No data' };
+    if (mgDl < 70) return { key: 'danger', label: 'Low' };
     const fasting = reading.context === 'fasting';
     if (fasting) {
-      if (mgDl >= 126 || mgDl < 70) return { key: 'danger', label: 'High' };
+      if (mgDl >= 126) return { key: 'danger', label: 'High' };
       if (mgDl >= 100) return { key: 'warning', label: 'Elevated' };
       return { key: 'success', label: 'Normal' };
     }
-    if (mgDl >= 200 || mgDl < 70) return { key: 'danger', label: 'High' };
+    if (mgDl >= 200) return { key: 'danger', label: 'High' };
     if (mgDl >= 140) return { key: 'warning', label: 'Elevated' };
     return { key: 'success', label: 'Normal' };
   }

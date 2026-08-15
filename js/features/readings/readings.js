@@ -183,7 +183,14 @@ export async function renderReadingsUI(root, { user, profile, supabase }) {
     setButtonBusy(submit, false, 'Log reading');
 
     const who = namesById[memberId] || 'this member';
-    showAlert(`Reading logged for ${who}.`, 'success');
+    const status = classifyReading(payload.data);
+    if (status.key === 'danger') {
+      showAlert(`Logged for ${who}. ${formatTypeLabel(payload.data.type)} is ${status.label.toLowerCase()}.`, 'error');
+    } else if (status.key === 'warning') {
+      showAlert(`Logged for ${who}. ${formatTypeLabel(payload.data.type)} is ${status.label.toLowerCase()}.`, 'warning');
+    } else {
+      showAlert(`Reading logged for ${who}.`, 'success');
+    }
     form.reset();
     if (memberSelect) memberSelect.value = memberId;
     typeSelect.value = 'bp';

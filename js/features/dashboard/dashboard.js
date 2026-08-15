@@ -22,7 +22,6 @@ import {
   groupReadingsByUser,
   personName,
 } from '../../shared/insights.js';
-import { bindProfileForm, profileFieldsHtml } from '../../shared/profileForm.js';
 
 export async function renderDashboard(root, ctx) {
   const { user, profile, supabase } = ctx;
@@ -65,20 +64,6 @@ export async function renderDashboard(root, ctx) {
         </div>
 
         <section class="section">
-          <div class="card">
-            <div class="section-heading">
-              <h2 class="section-title">Your profile</h2>
-              <a href="#/profile" class="text-link">Open profile</a>
-            </div>
-            <p class="muted mb-4">Name, email, date of birth, and weight. Birth date and weight change how your readings are judged.</p>
-            <form id="own-profile-form">
-              ${profileFieldsHtml(self, { prefix: 'own-' })}
-              <button type="submit" class="btn-primary">Save profile</button>
-            </form>
-          </div>
-        </section>
-
-        <section class="section">
           <div class="section-heading">
             <h2 class="section-title">Insights</h2>
             <p class="muted">${insights.weekCount} reading${insights.weekCount === 1 ? '' : 's'} this week${
@@ -113,16 +98,6 @@ export async function renderDashboard(root, ctx) {
       </section>
     `;
 
-    bindProfileForm(root.querySelector('#own-profile-form'), {
-      supabase,
-      userId: user.id,
-      onSaved: async (next) => {
-        ctx.profile = { ...profile, ...next };
-        const navUser = document.querySelector('.nav-user');
-        if (navUser && next.full_name) navUser.textContent = next.full_name;
-        await renderDashboard(root, ctx);
-      },
-    });
   } catch (error) {
     root.innerHTML = `<p class="empty-state">${escapeHtml(setupErrorMessage(error))}</p>`;
     showAlert(setupErrorMessage(error), 'error');
@@ -155,21 +130,23 @@ function alertsSection(alerts) {
       <h2 class="section-title">Alerts</h2>
       <ul class="alert-list">
         ${alerts
-          .map(
-            (alert) => `
+          .map((alert) => {
+            const href = alert.id?.endsWith('-stats')
+              ? '#/profile'
+              : alert.personId
+                ? `#/readings?member=${encodeURIComponent(alert.personId)}`
+                : '';
+            const label = alert.id?.endsWith('-stats') ? 'Profile' : 'Review';
+            return `
               <li class="alert-item">
                 <span class="status-chip ${alert.severity}">${escapeHtml(severityLabel(alert.severity))}</span>
                 <div>
                   <p class="alert-title">${escapeHtml(alert.title)}</p>
                   <p class="muted">${escapeHtml(alert.detail)}</p>
                 </div>
-                ${
-                  alert.personId
-                    ? `<a href="#/readings?member=${encodeURIComponent(alert.personId)}" class="text-link">Review</a>`
-                    : ''
-                }
-              </li>`,
-          )
+                ${href ? `<a href="${href}" class="text-link">${label}</a>` : ''}
+              </li>`;
+          })
           .join('')}
       </ul>
     </section>

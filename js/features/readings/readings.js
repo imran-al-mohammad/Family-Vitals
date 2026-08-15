@@ -3,7 +3,6 @@ import { escapeHtml } from '../../shared/html.js';
 import {
   classifyReading,
   formatDate,
-  formatPersonStats,
   formatReadingValue,
   formatTypeLabel,
 } from '../../shared/format.js';
@@ -13,7 +12,6 @@ import {
   insertReading,
   setupErrorMessage,
 } from '../../shared/api.js';
-import { bindBodyStatsForm, bodyStatsFieldsHtml } from '../../shared/bodyStats.js';
 
 export async function renderReadingsUI(root, { user, profile, supabase }) {
   let members = [];
@@ -35,8 +33,6 @@ export async function renderReadingsUI(root, { user, profile, supabase }) {
           <h1 class="view-title">Readings</h1>
         </div>
       </header>
-
-      <div class="card" id="reading-stats-card"></div>
 
       <div class="card">
         <h2 class="section-title">Log a reading</h2>
@@ -165,34 +161,6 @@ export async function renderReadingsUI(root, { user, profile, supabase }) {
   const selectedMemberId = () => memberSelect?.value || user.id;
   const selectedPerson = () => people.find((person) => person.id === selectedMemberId()) || people[0];
 
-  const paintStatsForm = () => {
-    const card = root.querySelector('#reading-stats-card');
-    const person = selectedPerson();
-    if (!card || !person) return;
-    const stats = formatPersonStats(person);
-    card.innerHTML = `
-      <h2 class="section-title">Date of birth &amp; weight</h2>
-      <p class="muted mb-4">${
-        stats
-          ? `Readings for this person are judged using ${escapeHtml(stats)}.`
-          : 'Add date of birth and weight so alerts and insights use the right ranges for this person.'
-      }</p>
-      <form id="reading-stats-form">
-        ${bodyStatsFieldsHtml(person, { prefix: 'reading-' })}
-        <button type="submit" class="btn-secondary">Save</button>
-      </form>
-    `;
-    bindBodyStatsForm(card.querySelector('#reading-stats-form'), {
-      supabase,
-      userId: person.id,
-      onSaved: async (next) => {
-        Object.assign(person, next);
-        paintStatsForm();
-        await renderHistory(root, supabase, person.id, namesById, person);
-      },
-    });
-  };
-
   const toggleFields = () => {
     const type = typeSelect.value;
     root.querySelector('#bp-fields').classList.toggle('is-hidden', type !== 'bp');
@@ -216,7 +184,6 @@ export async function renderReadingsUI(root, { user, profile, supabase }) {
   toggleWhenFields();
 
   memberSelect?.addEventListener('change', async () => {
-    paintStatsForm();
     await renderHistory(root, supabase, selectedMemberId(), namesById, selectedPerson());
   });
 
@@ -277,7 +244,6 @@ export async function renderReadingsUI(root, { user, profile, supabase }) {
     await renderHistory(root, supabase, selectedMemberId(), namesById, selectedPerson());
   });
 
-  paintStatsForm();
   await renderHistory(root, supabase, selectedMemberId(), namesById, selectedPerson());
 }
 

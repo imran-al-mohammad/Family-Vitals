@@ -21,7 +21,6 @@ import {
   buildAlerts,
   groupReadingsByUser,
 } from '../../shared/insights.js';
-import { bindBodyStatsForm, bodyStatsFieldsHtml } from '../../shared/bodyStats.js';
 
 export async function renderFamilyView(root, ctx) {
   const { user, supabase } = ctx;
@@ -78,16 +77,6 @@ export async function renderFamilyView(root, ctx) {
         }
       </section>
     `;
-
-    root.querySelectorAll('[data-stats-form]').forEach((form) => {
-      bindBodyStatsForm(form, {
-        supabase,
-        userId: form.getAttribute('data-stats-form'),
-        onSaved: async () => {
-          await renderFamilyView(root, ctx);
-        },
-      });
-    });
   } catch (error) {
     root.innerHTML = `<p class="empty-state">${escapeHtml(setupErrorMessage(error))}</p>`;
     showAlert(setupErrorMessage(error), 'error');
@@ -213,11 +202,6 @@ function memberCard(member, latest, history, alerts, { currentUserId, isAdmin } 
               </ul>`
         }
       </div>
-      <form class="member-stats-form" data-stats-form="${escapeHtml(member.id)}">
-        <p class="mini-title">Date of birth &amp; weight</p>
-        ${bodyStatsFieldsHtml(member, { prefix: `member-${member.id}-` })}
-        <button type="submit" class="btn-secondary">Save</button>
-      </form>
     </article>
   `;
 }

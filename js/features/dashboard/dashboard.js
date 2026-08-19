@@ -30,6 +30,21 @@ export async function renderDashboard(root, ctx) {
   try {
     const members = await fetchFamilyMembers(supabase, profile?.family_id);
     const people = peopleForDashboard(user, profile, members);
+
+    // Fetch medicines for each family member
+    const medicineIds = [];
+    const memberMedMap = new Map();
+    for (const member of members) {
+      const { data: meds, error: medsError } = await supabase
+        .from('medicines')
+        .select('*')
+        .eq('user_id', member.id);
+      if (medsError) throw medsError;
+      const medsList = meds || [];
+      memberMedMap.set(member.id, medsList);
+      medicineIds.push(...medsList.map((m) => m.id));
+    }
+
     const allReadings = await fetchReadingsForUsers(
       supabase,
       people.map((person) => person.id),
@@ -40,7 +55,14 @@ export async function renderDashboard(root, ctx) {
     const self = people.find((person) => person.id === user.id) || profile;
     const latest = latestByType(ownReadings);
     const insights = buildPersonInsights(ownReadings, self);
-    const alerts = buildAlerts(people, readingsByUser, { currentUserId: user.id });
+    
+    // Attach medicines to person objects for alerts
+    const peopleWithMeds = people.map((person) => ({
+      ...person,
+      medicines: memberMedMap.get(person.id) || [],
+    }));
+    
+    const alerts = buildAlerts(peopleWithMeds, readingsByUser, { currentUserId: user.id });
     const weekHousehold = allReadings.filter(
       (reading) => Date.now() - new Date(reading.created_at).getTime() <= 7 * 24 * 60 * 60 * 1000,
     ).length;

@@ -1,0 +1,1 @@
+ALTER TABLE public.medicines ADD COLUMN IF NOT EXISTS last_deduction_at TIMESTAMPTZ DEFAULT now();

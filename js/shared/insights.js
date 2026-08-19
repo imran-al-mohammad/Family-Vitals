@@ -15,6 +15,7 @@ import {
 const DAY = 24 * 60 * 60 * 1000;
 const STALE_DAYS = 7;
 const TYPES = ['bp', 'pulse', 'blood-sugar'];
+const REFILL_SOON_DAYS = 3;
 
 export function groupReadingsByUser(readings = []) {
   const grouped = {};
@@ -170,6 +171,58 @@ export function buildAlerts(people, readingsByUser, { currentUserId, now = Date.
           : `${name}: ${formatTypeLabel(type)} is ${status.label.toLowerCase()}`,
         detail: `${formatReadingValue(reading)} · ${formatDate(reading.created_at)}`,
       });
+    }
+  }
+
+  // Add medicine alerts
+  for (const person of people || []) {
+    const personMeds = (person.medicines || []).filter(
+      (m) => m.status !== 'completed'
+    );
+    const now = Date.now();
+
+    for (const med of personMeds) {
+      const lastDed = med.last_deduction_at || med.start_date;
+      const daysElapsed = Math.floor(
+        (now - new Date(lastDed).getTime()) / DAY
+      );
+      const dailyConsumption = med.pieces_per_dose * med.doses_per_day;
+      const remaining = Math.max(0, med.remaining_pieces - daysElapsed * dailyConsumption);
+
+      // Low-stock alert
+      if (remaining > 0 && remaining <= dailyConsumption * 2) {
+        alerts.push({
+          id: `${person.id}-med-low-stock-${med.id}`,
+          severity: 'warning',
+          personId: person.id,
+          title: `Low stock for ${med.medicine_name}`,
+          detail: `${remaining} pieces remaining (${Math.max(1, Math.ceil(remaining / dailyConsumption))} days left)`,
+        });
+      }
+
+      // Out-of-stock alert
+      if (remaining <= 0) {
+        alerts.push({
+          id: `${person.id}-med-out-stock-${med.id}`,
+          severity: 'danger',
+          personId: person.id,
+          title: `Out of stock: ${med.medicine_name}`,
+          detail: 'Remaining pieces have reached 0',
+        });
+      }
+
+      // Refill-soon alert
+      if (remaining > 0 && remaining <= dailyConsumption && daysElapsed > 0) {
+        alerts.push({
+          id: `${person.id}-med-refill-soon-${med.id}`,
+          severity: 'info',
+          personId: person.id,
+          title: `Refill soon: ${med.medicine_name}`,
+          detail: `${Math.max(1, Math.ceil(remaining / dailyConsumption))} day${
+            Math.max(1, Math.ceil(remaining / dailyConsumption)) === 1 ? '' : 's'
+          } left`,
+        });
+      }
     }
   }
 

@@ -6,6 +6,7 @@ import { renderFamilyView } from './features/family/family.js';
 import { renderReadingsUI } from './features/readings/readings.js';
 import { renderAdminUI } from './features/admin/admin.js';
 import { renderProfileUI } from './features/profile/profile.js';
+import { renderMedicinesUI } from './features/medicines/medicines.js';
 import { escapeHtml } from './shared/html.js';
 import { ensureProfile, setupErrorMessage } from './shared/api.js';
 
@@ -55,6 +56,7 @@ function renderShell() {
             <a href="#/" data-route="/" class="${route === '/' ? 'is-active' : ''}">Dashboard</a>
             <a href="#/family" data-route="/family" class="${route === '/family' ? 'is-active' : ''}">Family</a>
             <a href="#/readings" data-route="/readings" class="${route === '/readings' ? 'is-active' : ''}">Readings</a>
+            <a href="#/medicines" data-route="/medicines" class="${route === '/medicines' ? 'is-active' : ''}">Medicines</a>
             <a href="#/profile" data-route="/profile" class="${route === '/profile' ? 'is-active' : ''}">Profile</a>
             ${
               isAdmin
@@ -138,6 +140,10 @@ async function renderCurrentView() {
   if (route === '/profile') {
     await renderProfileUI(viewRoot, ctx);
     currentProfile = ctx.profile || currentProfile;
+    return;
+  }
+  if (route === '/medicines') {
+    await renderMedicinesUI(viewRoot, ctx);
     return;
   }
   if (route === '/admin') {

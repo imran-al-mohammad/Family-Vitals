@@ -21,6 +21,8 @@ import {
   buildPersonInsights,
   groupReadingsByUser,
   personName,
+  readingsInRange,
+  trendForTypeRange,
 } from '../../shared/insights.js';
 
 export async function renderDashboard(root, ctx) {
@@ -56,6 +58,39 @@ export async function renderDashboard(root, ctx) {
     const latest = latestByType(ownReadings);
     const insights = buildPersonInsights(ownReadings, self);
     
+    // Determine range window (default 30 days)
+    const range = '30'; // Will be made interactive later
+    const DAY = 24 * 60 * 60 * 1000;
+    const rangeMs = {
+      '7': 7 * DAY,
+      '30': 30 * DAY,
+      '90': 90 * DAY,
+    }[range];
+    const rangeStart = Date.now() - (rangeMs || 30 * DAY);
+    const rangeEnd = Date.now();
+
+    // Get in-range readings per type for sparklines
+    const bpReadings = readingsInRange(ownReadings, rangeStart, rangeEnd).filter(
+      (r) => r.type === 'bp',
+    );
+    const pulseReadings = readingsInRange(ownReadings, rangeStart, rangeEnd).filter(
+      (r) => r.type === 'pulse',
+    );
+    const sugarReadings = readingsInRange(ownReadings, rangeStart, rangeEnd).filter(
+      (r) => r.type === 'blood-sugar',
+    );
+
+    const bpSparkline = renderSparklineSVG(bpReadings, 'bp');
+    const pulseSparkline = renderSparklineSVG(pulseReadings, 'pulse');
+    const sugarSparkline = renderSparklineSVG(sugarReadings, 'blood-sugar');
+
+    // Compute trend direction markers
+    const getTrendMarker = (type) => {
+      const trend = trendForTypeRange(ownReadings, type, rangeStart, rangeEnd);
+      if (!trend) return '<span class="trend-indicator steady">Steady</span>';
+      return `<span class="trend-indicator ${trend.key}">${trend.label}</span>`;
+    };
+    
     // Attach medicines to person objects for alerts
     const peopleWithMeds = people.map((person) => ({
       ...person,
@@ -85,6 +120,25 @@ export async function renderDashboard(root, ctx) {
           ${metricCard('blood-sugar', latest['blood-sugar'], self)}
         </div>
 
+        <div class="chart-section">
+${renderRangeControls('30', () => {})}
+          <div class="chart-container bp-chart">
+            <svg class="sparkline" viewBox="0 0 100 40">${bpSparkline}</svg>
+            <div class="chart-tooltip hidden"></div>
+            ${getTrendMarker('bp')}
+          </div>
+          <div class="chart-container pulse-chart">
+            <svg class="sparkline" viewBox="0 0 100 40">${pulseSparkline}</svg>
+            <div class="chart-tooltip hidden"></div>
+            ${getTrendMarker('pulse')}
+          </div>
+          <div class="chart-container sugar-chart">
+            <svg class="sparkline" viewBox="0 0 100 40">${sugarSparkline}</svg>
+            <div class="chart-tooltip hidden"></div>
+            ${getTrendMarker('blood-sugar')}
+          </div>
+        </div>
+
         <section class="section">
           <div class="section-heading">
             <h2 class="section-title">Insights</h2>
@@ -106,6 +160,7 @@ export async function renderDashboard(root, ctx) {
             <a href="#/family" class="text-link">Open family</a>
           </div>
           ${familySummary(profile, people, user.id, alerts)}
+        ${familySnapshot(profile, people, user.id, alerts)}
         </section>
 
         <section class="section">
@@ -311,5 +366,149 @@ function historyCard(person, readings, currentUserId, alerts) {
             </ul>`
       }
     </article>
+  `;
+}
+
+function renderSparklineSVG(readings, type, maxPoints = 30) {
+  if (!readings || readings.length < 2) return '';
+
+  const points = readings.length > maxPoints ? readings.slice(readings.length - maxPoints) : readings;
+
+  let minVal = Infinity,
+    maxVal = -Infinity;
+  for (const reading of points) {
+    let val;
+    if (type === 'bp') {
+      val = Math.max(Number(reading.systolic), Number(reading.diastolic));
+    } else if (type === 'pulse') {
+      val = Number(reading.bpm);
+    } else {
+      val = numericValue(reading);
+    }
+    if (!Number.isNaN(val)) {
+      if (val < minVal) minVal = val;
+      if (val > maxVal) maxVal = val;
+    }
+  }
+  if (minVal === maxVal) maxVal += 1;
+
+  const chartWidth = points.length * 2 + 20;
+  const chartHeight = 40;
+  let d = '';
+
+  for (let i = 0; i < points.length; i++) {
+    const reading = points[i];
+    const x = (i / Math.max(1, points.length - 1)) * (chartWidth - 20) + 10;
+    let y;
+    if (type === 'bp') {
+      val = Math.max(Number(reading.systolic), Number(reading.diastolic));
+    } else if (type === 'pulse') {
+      val = Number(reading.bpm);
+    } else {
+      val = numericValue(reading);
+    }
+    if (Number.isNaN(val)) continue;
+    y = chartHeight - ((val - minVal) / (maxVal - minVal)) * chartHeight;
+    if (i === 0) d += `M ${x} ${y}`;
+    else d += ` L ${x} ${y}`;
+  }
+
+  if (!d) return '';
+  return `<path d="${d}" fill="none" stroke="rgba(255, 255, 255, 0.4)" stroke-width="1"/>`;
+}
+
+function renderRangeControls(selectedRange, onRangeChange) {
+  return `
+    <div class="chart-range">
+      <button class="range-btn ${selectedRange === '7' ? 'active' : ''}" data-range="7">7d</button>
+      <button class="range-btn ${selectedRange === '30' ? 'active' : ''}" data-range="30">30d</button>
+      <button class="range-btn ${selectedRange === '90' ? 'active' : ''}" data-range="90">90d</button>
+    </div>
+  `;
+}
+
+function renderChartTooltip(e, readings, type) {
+  const target = e.currentTarget;
+  const rect = target.getBoundingClientRect();
+  const clientX = e.clientX;
+  const readingsSlice = readings.slice(-5).reverse();
+  let html = '';
+  for (const reading of readingsSlice) {
+    let value;
+    if (type === 'bp') {
+      value = formatReadingValue(reading);
+    } else if (type === 'pulse') {
+      value = reading.bpm ? String(reading.bpm) + ' bpm' : '—';
+    } else {
+      value = formatReadingValue(reading);
+    }
+    const date = formatDate(reading.created_at);
+    html += `<div class="tooltip-row"><span class="muted">${date}</span> <span class="value">${escapeHtml(value)}</span></div>`;
+  }
+  const tooltip = target.querySelector('.chart-tooltip');
+  if (!tooltip) {
+    const newTooltip = document.createElement('div');
+    newTooltip.className = 'chart-tooltip';
+    newTooltip.innerHTML = html;
+    target.appendChild(newTooltip);
+    tooltip = newTooltip;
+  }
+  tooltip.classList.add('visible');
+  const tooltipRect = tooltip.getBoundingClientRect();
+  let left = clientX - tooltipRect.width / 2;
+  if (left < rect.left) left = rect.left;
+  if (left + tooltipRect.width > rect.right) left = rect.right - tooltipRect.width;
+  tooltip.style.left = `${left}px`;
+  tooltip.style.top = `${rect.top - tooltipRect.height - 4}px`;
+}
+
+function clearChartTooltips() {
+  const tooltips = document.querySelectorAll('.chart-tooltip');
+  tooltips.forEach((t) => t.remove());
+}
+
+function familySnapshot(profile, people, userId, alerts) {
+  if (!profile?.family_id) return '';
+
+  const others = people.filter((person) => person.id !== userId);
+  if (others.length === 0) return '';
+
+  const latestReadingsByUser = {};
+  for (const person of others) {
+    const personReadings = readingsByUser[person.id] || [];
+    if (personReadings.length > 0) {
+      latestReadingsByUser[person.id] = personReadings[0]; // newest first
+    }
+  }
+
+  if (Object.keys(latestReadingsByUser).length === 0) return '';
+
+  const parts = [];
+  for (const [personId, reading] of Object.entries(latestReadingsByUser)) {
+    const person = people.find((p) => p.id === personId);
+    if (!person) continue;
+
+    const name = personName(person, userId);
+    const type = reading.type;
+    const value = reading.type === 'bp'
+      ? `${reading.systolic}/${reading.diastolic}`
+      : reading.type === 'pulse'
+        ? String(reading.bpm)
+        : formatReadingValue(reading).split(' · ')[0];
+
+    const status = classifyReading(reading, person);
+    parts.push(`
+      <div class="family-snapshot person-reading">
+        <span class="muted">${escapeHtml(name)}</span>
+        <span class="value">${escapeHtml(value)}</span>
+        <span class="status-chip ${status.key}">${escapeHtml(status.label)}</span>
+      </div>
+    `);
+  }
+
+  return `
+    <div class="family-snapshot">
+      ${parts.join('')}
+    </div>
   `;
 }

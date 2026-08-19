@@ -82,13 +82,61 @@ export function averageForType(readings, type) {
 }
 
 export function trendForType(readings, type, now = Date.now()) {
-  const recent = averageForType(inWindow(readings, now - 7 * DAY, now), type);
+  const recent = averageForType(inWindow(readings, now - 7 * DAY), type);
   const previous = averageForType(inWindow(readings, now - 14 * DAY, now - 7 * DAY), type);
   if (!recent || !previous) return null;
 
   const delta = recent.value - previous.value;
   const threshold = type === 'blood-sugar' ? 10 : 5;
   if (Math.abs(delta) < threshold) return { key: 'steady', label: 'Steady' };
+  if (delta > 0) return { key: 'rising', label: 'Rising' };
+  return { key: 'falling', label: 'Falling' };
+}
+
+export function readingsInRange(readings, startMs, endMs) {
+  return (readings || []).filter((reading) => {
+    const time = new Date(reading.created_at).getTime();
+    return !Number.isNaN(time) && time >= startMs && time < endMs;
+  });
+}
+
+export function averageForTypeRange(readings, type, startMs, endMs) {
+  const rows = readingsInRange(readings, startMs, endMs).filter((reading) => reading.type === type);
+  if (!rows.length) return null;
+
+  if (type === 'bp') {
+    const systolic = mean(rows.map((reading) => Number(reading.systolic)));
+    const diastolic = mean(rows.map((reading) => Number(reading.diastolic)));
+    if (systolic == null || diastolic == null) return null;
+    return {
+      label: `${Math.round(systolic)}/${Math.round(diastolic)}`,
+      value: systolic,
+    };
+  }
+
+  if (type === 'pulse') {
+    const value = mean(rows.map((reading) => Number(reading.bpm)));
+    if (value == null) return null;
+    return { label: String(Math.round(value)), value };
+  }
+
+  const value = mean(rows.map((reading) => numericValue(reading)));
+  if (value == null) return null;
+  return { label: String(Math.round(value)), value, unit: 'mg/dL' };
+}
+
+export function trendForTypeRange(readings, type, startMs, endMs) {
+  const recent = averageForTypeRange(readings, type, startMs, endMs);
+  const midMs = startMs + (endMs - startMs) / 2;
+  const halfWidth = (endMs - startMs) / 4;
+  const previousStart = midMs - halfWidth;
+  const previousEnd = midMs + halfWidth;
+
+  const previous = averageForTypeRange(readings, type, previousStart, previousEnd);
+  if (!recent || !previous) return null;
+
+  const delta = recent.value - previous.value;
+  if (Math.abs(delta) < 5) return { key: 'steady', label: 'Steady' };
   if (delta > 0) return { key: 'rising', label: 'Rising' };
   return { key: 'falling', label: 'Falling' };
 }

@@ -160,7 +160,7 @@ ${renderRangeControls('30', () => {})}
             <a href="#/family" class="text-link">Open family</a>
           </div>
           ${familySummary(profile, people, user.id, alerts)}
-        ${familySnapshot(profile, people, user.id, alerts)}
+         ${familySnapshot(profile, people, user.id, alerts, readingsByUser)}
         </section>
 
         <section class="section">
@@ -445,7 +445,7 @@ function renderChartTooltip(e, readings, type) {
     const date = formatDate(reading.created_at);
     html += `<div class="tooltip-row"><span class="muted">${date}</span> <span class="value">${escapeHtml(value)}</span></div>`;
   }
-  const tooltip = target.querySelector('.chart-tooltip');
+  let tooltip = target.querySelector('.chart-tooltip');
   if (!tooltip) {
     const newTooltip = document.createElement('div');
     newTooltip.className = 'chart-tooltip';
@@ -467,7 +467,7 @@ function clearChartTooltips() {
   tooltips.forEach((t) => t.remove());
 }
 
-function familySnapshot(profile, people, userId, alerts) {
+function familySnapshot(profile, people, userId, alerts, readingsByUser) {
   if (!profile?.family_id) return '';
 
   const others = people.filter((person) => person.id !== userId);

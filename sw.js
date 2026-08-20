@@ -1,10 +1,25 @@
-const CACHE_NAME = 'family-vitals-v2';
+const CACHE_NAME = 'family-vitals-v3';
 
 const PRECACHE = [
   './',
   './index.html',
   './css/style.css',
   './js/app.js',
+  './js/services/supabaseClient.js',
+  './js/services/uiService.js',
+  './js/shared/api.js',
+  './js/shared/bodyStats.js',
+  './js/shared/format.js',
+  './js/shared/html.js',
+  './js/shared/insights.js',
+  './js/shared/profileForm.js',
+  './js/features/auth/auth.js',
+  './js/features/dashboard/dashboard.js',
+  './js/features/family/family.js',
+  './js/features/medicines/medicines.js',
+  './js/features/profile/profile.js',
+  './js/features/readings/readings.js',
+  './js/features/admin/admin.js',
   './manifest.json',
   './offline.html',
 ];

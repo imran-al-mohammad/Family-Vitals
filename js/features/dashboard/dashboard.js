@@ -8,6 +8,7 @@ import {
   formatTypeLabel,
   hasBodyStats,
   latestByType,
+  numericValue,
   readingUnit,
 } from '../../shared/format.js';
 import {
@@ -399,6 +400,7 @@ function renderSparklineSVG(readings, type, maxPoints = 30) {
   for (let i = 0; i < points.length; i++) {
     const reading = points[i];
     const x = (i / Math.max(1, points.length - 1)) * (chartWidth - 20) + 10;
+    let val;
     let y;
     if (type === 'bp') {
       val = Math.max(Number(reading.systolic), Number(reading.diastolic));

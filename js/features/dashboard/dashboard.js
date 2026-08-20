@@ -26,6 +26,10 @@ import {
   trendForTypeRange,
 } from '../../shared/insights.js';
 
+const DAY = 24 * 60 * 60 * 1000;
+const RANGE_MS = { '7': 7 * DAY, '30': 30 * DAY, '90': 90 * DAY };
+const RANGE_LABEL = { '7': '7 days', '30': '30 days', '90': '90 days' };
+
 export async function renderDashboard(root, ctx) {
   const { user, profile, supabase } = ctx;
   root.innerHTML = `<p class="empty-state">Loading dashboard…</p>`;
@@ -35,7 +39,6 @@ export async function renderDashboard(root, ctx) {
     const people = peopleForDashboard(user, profile, members);
 
     // Fetch medicines for each family member
-    const medicineIds = [];
     const memberMedMap = new Map();
     for (const member of members) {
       const { data: meds, error: medsError } = await supabase
@@ -43,9 +46,7 @@ export async function renderDashboard(root, ctx) {
         .select('*')
         .eq('user_id', member.id);
       if (medsError) throw medsError;
-      const medsList = meds || [];
-      memberMedMap.set(member.id, medsList);
-      medicineIds.push(...medsList.map((m) => m.id));
+      memberMedMap.set(member.id, meds || []);
     }
 
     const allReadings = await fetchReadingsForUsers(
@@ -58,124 +59,89 @@ export async function renderDashboard(root, ctx) {
     const self = people.find((person) => person.id === user.id) || profile;
     const latest = latestByType(ownReadings);
     const insights = buildPersonInsights(ownReadings, self);
-    
-    // Determine range window (default 30 days)
-    const range = '30'; // Will be made interactive later
-    const DAY = 24 * 60 * 60 * 1000;
-    const rangeMs = {
-      '7': 7 * DAY,
-      '30': 30 * DAY,
-      '90': 90 * DAY,
-    }[range];
-    const rangeStart = Date.now() - (rangeMs || 30 * DAY);
-    const rangeEnd = Date.now();
 
-    // Get in-range readings per type for sparklines
-    const bpReadings = readingsInRange(ownReadings, rangeStart, rangeEnd).filter(
-      (r) => r.type === 'bp',
-    );
-    const pulseReadings = readingsInRange(ownReadings, rangeStart, rangeEnd).filter(
-      (r) => r.type === 'pulse',
-    );
-    const sugarReadings = readingsInRange(ownReadings, rangeStart, rangeEnd).filter(
-      (r) => r.type === 'blood-sugar',
-    );
-
-    const bpSparkline = renderSparklineSVG(bpReadings, 'bp');
-    const pulseSparkline = renderSparklineSVG(pulseReadings, 'pulse');
-    const sugarSparkline = renderSparklineSVG(sugarReadings, 'blood-sugar');
-
-    // Compute trend direction markers
-    const getTrendMarker = (type) => {
-      const trend = trendForTypeRange(ownReadings, type, rangeStart, rangeEnd);
-      if (!trend) return '<span class="trend-indicator steady">Steady</span>';
-      return `<span class="trend-indicator ${trend.key}">${trend.label}</span>`;
-    };
-    
     // Attach medicines to person objects for alerts
     const peopleWithMeds = people.map((person) => ({
       ...person,
       medicines: memberMedMap.get(person.id) || [],
     }));
-    
+
     const alerts = buildAlerts(peopleWithMeds, readingsByUser, { currentUserId: user.id });
     const weekHousehold = allReadings.filter(
-      (reading) => Date.now() - new Date(reading.created_at).getTime() <= 7 * 24 * 60 * 60 * 1000,
+      (reading) => Date.now() - new Date(reading.created_at).getTime() <= 7 * DAY,
     ).length;
 
-    root.innerHTML = `
-      <section class="view">
-        <header class="view-header">
-          <div>
-            <p class="eyebrow">Overview</p>
-            <h1 class="view-title">Dashboard</h1>
-          </div>
-          <a href="#/readings" class="btn-primary">Log reading</a>
-        </header>
+    let range = '30';
 
-        ${alertsSection(alerts)}
+    const render = () => {
+      root.innerHTML = `
+        <section class="view">
+          <header class="view-header">
+            <div>
+              <p class="eyebrow">Overview</p>
+              <h1 class="view-title">Dashboard</h1>
+            </div>
+            <a href="#/readings" class="btn-primary">Log reading</a>
+          </header>
 
-        <div class="metric-grid">
-          ${metricCard('bp', latest.bp, self)}
-          ${metricCard('pulse', latest.pulse, self)}
-          ${metricCard('blood-sugar', latest['blood-sugar'], self)}
-        </div>
+          ${alertsSection(alerts)}
 
-        <div class="chart-section">
-${renderRangeControls('30', () => {})}
-          <div class="chart-container bp-chart">
-            <svg class="sparkline" viewBox="0 0 100 40">${bpSparkline}</svg>
-            <div class="chart-tooltip hidden"></div>
-            ${getTrendMarker('bp')}
-          </div>
-          <div class="chart-container pulse-chart">
-            <svg class="sparkline" viewBox="0 0 100 40">${pulseSparkline}</svg>
-            <div class="chart-tooltip hidden"></div>
-            ${getTrendMarker('pulse')}
-          </div>
-          <div class="chart-container sugar-chart">
-            <svg class="sparkline" viewBox="0 0 100 40">${sugarSparkline}</svg>
-            <div class="chart-tooltip hidden"></div>
-            ${getTrendMarker('blood-sugar')}
-          </div>
-        </div>
-
-        <section class="section">
-          <div class="section-heading">
-            <h2 class="section-title">Insights</h2>
-            <p class="muted">${insights.weekCount} reading${insights.weekCount === 1 ? '' : 's'} this week${
-              insights.statsLabel ? ` · ${insights.statsLabel}` : ''
-            }${!insights.personalized ? ' · general adult ranges' : ''}</p>
-          </div>
           <div class="metric-grid">
-            ${insightCard('Blood pressure', insights.types.bp, '7-day average')}
-            ${insightCard('Pulse', insights.types.pulse, '7-day average')}
-            ${insightCard('Blood sugar', insights.types['blood-sugar'], '7-day average')}
-            ${countCard(insights, weekHousehold, people.length)}
+            ${metricCard('bp', latest.bp, self)}
+            ${metricCard('pulse', latest.pulse, self)}
+            ${metricCard('blood-sugar', latest['blood-sugar'], self)}
           </div>
-        </section>
 
-        <section class="section">
-          <div class="section-heading">
-            <h2 class="section-title">Family</h2>
-            <a href="#/family" class="text-link">Open family</a>
-          </div>
-          ${familySummary(profile, people, user.id, alerts)}
-         ${familySnapshot(profile, people, user.id, alerts, readingsByUser)}
-        </section>
+          <div id="trends-mount">${renderTrendsSection(ownReadings, range)}</div>
 
-        <section class="section">
-          <div class="section-heading">
-            <h2 class="section-title">History</h2>
-            <a href="#/readings" class="text-link">Log or edit</a>
-          </div>
-          <div class="history-grid">
-            ${people.map((person) => historyCard(person, readingsByUser[person.id] || [], user.id, alerts)).join('')}
-          </div>
-        </section>
-      </section>
-    `;
+          <section class="section">
+            <div class="section-heading">
+              <h2 class="section-title">Insights</h2>
+              <p class="muted">${insights.weekCount} reading${insights.weekCount === 1 ? '' : 's'} this week${
+                insights.statsLabel ? ` · ${insights.statsLabel}` : ''
+              }${!insights.personalized ? ' · general adult ranges' : ''}</p>
+            </div>
+            <div class="metric-grid">
+              ${insightCard('Blood pressure', insights.types.bp, '7-day average')}
+              ${insightCard('Pulse', insights.types.pulse, '7-day average')}
+              ${insightCard('Blood sugar', insights.types['blood-sugar'], '7-day average')}
+              ${countCard(insights, weekHousehold, people.length)}
+            </div>
+          </section>
 
+          <section class="section">
+            <div class="section-heading">
+              <h2 class="section-title">Family</h2>
+              <a href="#/family" class="text-link">Open family</a>
+            </div>
+            ${familySummary(profile, people, user.id, alerts)}
+            ${familySnapshot(profile, people, user.id, alerts, readingsByUser)}
+          </section>
+
+          <section class="section">
+            <div class="section-heading">
+              <h2 class="section-title">History</h2>
+              <a href="#/readings" class="text-link">Log or edit</a>
+            </div>
+            <div class="history-grid">
+              ${people.map((person) => historyCard(person, readingsByUser[person.id] || [], user.id, alerts)).join('')}
+            </div>
+          </section>
+        </section>
+      `;
+    };
+
+    const onRangeChange = (newRange) => {
+      range = newRange;
+      const mount = root.querySelector('#trends-mount');
+      if (mount) {
+        mount.innerHTML = renderTrendsSection(ownReadings, range);
+        bindTrends(root, range, onRangeChange);
+      }
+    };
+
+    render();
+    bindTrends(root, range, onRangeChange);
   } catch (error) {
     root.innerHTML = `<p class="empty-state">${escapeHtml(setupErrorMessage(error))}</p>`;
     showAlert(setupErrorMessage(error), 'error');
@@ -370,103 +336,200 @@ function historyCard(person, readings, currentUserId, alerts) {
   `;
 }
 
-function renderSparklineSVG(readings, type, maxPoints = 30) {
-  if (!readings || readings.length < 2) return '';
+/* ===== Trends section ===== */
 
-  const points = readings.length > maxPoints ? readings.slice(readings.length - maxPoints) : readings;
+function renderTrendsSection(readings, range) {
+  const rangeStart = Date.now() - (RANGE_MS[range] || 30 * DAY);
+  const rangeEnd = Date.now();
+  const inRange = (type) =>
+    readingsInRange(readings, rangeStart, rangeEnd).filter((r) => r.type === type);
 
-  let minVal = Infinity,
-    maxVal = -Infinity;
-  for (const reading of points) {
-    let val;
-    if (type === 'bp') {
-      val = Math.max(Number(reading.systolic), Number(reading.diastolic));
-    } else if (type === 'pulse') {
-      val = Number(reading.bpm);
-    } else {
-      val = numericValue(reading);
-    }
-    if (!Number.isNaN(val)) {
-      if (val < minVal) minVal = val;
-      if (val > maxVal) maxVal = val;
-    }
-  }
-  if (minVal === maxVal) maxVal += 1;
+  const bp = inRange('bp');
+  const pulse = inRange('pulse');
+  const sugar = inRange('blood-sugar');
 
-  const chartWidth = points.length * 2 + 20;
-  const chartHeight = 40;
-  let d = '';
-
-  for (let i = 0; i < points.length; i++) {
-    const reading = points[i];
-    const x = (i / Math.max(1, points.length - 1)) * (chartWidth - 20) + 10;
-    let val;
-    let y;
-    if (type === 'bp') {
-      val = Math.max(Number(reading.systolic), Number(reading.diastolic));
-    } else if (type === 'pulse') {
-      val = Number(reading.bpm);
-    } else {
-      val = numericValue(reading);
-    }
-    if (Number.isNaN(val)) continue;
-    y = chartHeight - ((val - minVal) / (maxVal - minVal)) * chartHeight;
-    if (i === 0) d += `M ${x} ${y}`;
-    else d += ` L ${x} ${y}`;
-  }
-
-  if (!d) return '';
-  return `<path d="${d}" fill="none" stroke="rgba(255, 255, 255, 0.4)" stroke-width="1"/>`;
+  return `
+    <section class="section trends-section">
+      <div class="section-heading trends-heading">
+        <h2 class="section-title">Trends</h2>
+        <div class="chart-range" role="group" aria-label="Trend range">
+          ${rangeBtn('7', range)}${rangeBtn('30', range)}${rangeBtn('90', range)}
+        </div>
+      </div>
+      <div class="trend-grid">
+        ${trendCard('Blood pressure', bp, 'bp', readings, range)}
+        ${trendCard('Pulse', pulse, 'pulse', readings, range)}
+        ${trendCard('Blood sugar', sugar, 'blood-sugar', readings, range)}
+      </div>
+    </section>
+  `;
 }
 
-function renderRangeControls(selectedRange, onRangeChange) {
+function rangeBtn(value, selected) {
+  return `<button type="button" class="range-btn ${value === selected ? 'active' : ''}" data-range="${value}">${value}d</button>`;
+}
+
+function trendCard(title, chartReadings, type, allReadings, range) {
+  const rangeStart = Date.now() - (RANGE_MS[range] || 30 * DAY);
+  const rangeEnd = Date.now();
+  const chart = renderTrendChart(chartReadings, type);
+  const trend = trendForTypeRange(allReadings, type, rangeStart, rangeEnd);
+  const latestReading = chartReadings[0];
+  const status = latestReading ? classifyReading(latestReading, null) : null;
+  const count = chartReadings.length;
+
   return `
-    <div class="chart-range">
-      <button class="range-btn ${selectedRange === '7' ? 'active' : ''}" data-range="7">7d</button>
-      <button class="range-btn ${selectedRange === '30' ? 'active' : ''}" data-range="30">30d</button>
-      <button class="range-btn ${selectedRange === '90' ? 'active' : ''}" data-range="90">90d</button>
+    <article class="trend-card">
+      <div class="trend-card-head">
+        <p class="trend-title">${escapeHtml(title)}</p>
+        ${status ? `<span class="status-chip ${status.key}">${escapeHtml(status.label)}</span>` : ''}
+      </div>
+      <div class="trend-chart-wrap">
+        ${chart || trendEmpty(title)}
+      </div>
+      <div class="trend-card-foot">
+        ${
+          trend
+            ? `<span class="trend-indicator ${trend.key}">${escapeHtml(trend.label)}</span>`
+            : `<span class="trend-indicator unknown">Need more data</span>`
+        }
+        <span class="muted">${count} reading${count === 1 ? '' : 's'} · ${RANGE_LABEL[range] || range}</span>
+      </div>
+    </article>
+  `;
+}
+
+function trendEmpty(title) {
+  return `
+    <div class="trend-empty">
+      <p>No ${escapeHtml(title.toLowerCase())} readings in this range</p>
+      <a href="#/readings" class="text-link">Log reading</a>
     </div>
   `;
 }
 
-function renderChartTooltip(e, readings, type) {
-  const target = e.currentTarget;
-  const rect = target.getBoundingClientRect();
-  const clientX = e.clientX;
-  const readingsSlice = readings.slice(-5).reverse();
-  let html = '';
-  for (const reading of readingsSlice) {
-    let value;
-    if (type === 'bp') {
-      value = formatReadingValue(reading);
-    } else if (type === 'pulse') {
-      value = reading.bpm ? String(reading.bpm) + ' bpm' : '—';
-    } else {
-      value = formatReadingValue(reading);
-    }
-    const date = formatDate(reading.created_at);
-    html += `<div class="tooltip-row"><span class="muted">${date}</span> <span class="value">${escapeHtml(value)}</span></div>`;
-  }
-  let tooltip = target.querySelector('.chart-tooltip');
-  if (!tooltip) {
-    const newTooltip = document.createElement('div');
-    newTooltip.className = 'chart-tooltip';
-    newTooltip.innerHTML = html;
-    target.appendChild(newTooltip);
-    tooltip = newTooltip;
-  }
-  tooltip.classList.add('visible');
-  const tooltipRect = tooltip.getBoundingClientRect();
-  let left = clientX - tooltipRect.width / 2;
-  if (left < rect.left) left = rect.left;
-  if (left + tooltipRect.width > rect.right) left = rect.right - tooltipRect.width;
-  tooltip.style.left = `${left}px`;
-  tooltip.style.top = `${rect.top - tooltipRect.height - 4}px`;
+function bindTrends(root, currentRange, onRangeChange) {
+  const mount = root.querySelector('#trends-mount');
+  if (!mount) return;
+  mount.querySelectorAll('.range-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const newRange = btn.dataset.range;
+      if (newRange === currentRange) return;
+      onRangeChange(newRange);
+    });
+  });
 }
 
-function clearChartTooltips() {
-  const tooltips = document.querySelectorAll('.chart-tooltip');
-  tooltips.forEach((t) => t.remove());
+/* ===== Chart rendering (sparse-data friendly) ===== */
+
+const CHART_W = 300;
+const CHART_H = 140;
+const CHART_PAD = 10;
+
+function renderTrendChart(readings, type) {
+  if (!readings || readings.length === 0) return '';
+
+  const buildSeries = (getValue) => {
+    const points = [];
+    for (const reading of readings) {
+      const time = new Date(reading.created_at).getTime();
+      const value = getValue(reading);
+      if (Number.isNaN(time) || value == null || Number.isNaN(value)) continue;
+      points.push({ x: time, y: value });
+    }
+    return points;
+  };
+
+  let series;
+  if (type === 'bp') {
+    series = [
+      { key: 'systolic', color: 'var(--color-danger)', points: buildSeries((r) => Number(r.systolic)) },
+      { key: 'diastolic', color: 'var(--color-success)', points: buildSeries((r) => Number(r.diastolic)) },
+    ];
+  } else if (type === 'pulse') {
+    series = [
+      { key: 'pulse', color: 'var(--color-primary)', points: buildSeries((r) => Number(r.bpm)) },
+    ];
+  } else {
+    series = [
+      { key: 'sugar', color: 'var(--color-warning)', points: buildSeries((r) => numericValue(r)) },
+    ];
+  }
+
+  const allPoints = series.flatMap((s) => s.points);
+  if (allPoints.length === 0) return '';
+
+  // Value range with padding
+  let minVal = Infinity;
+  let maxVal = -Infinity;
+  for (const p of allPoints) {
+    if (p.y < minVal) minVal = p.y;
+    if (p.y > maxVal) maxVal = p.y;
+  }
+  if (minVal === maxVal) {
+    minVal -= 1;
+    maxVal += 1;
+  }
+  const pad = (maxVal - minVal) * 0.12;
+  minVal -= pad;
+  maxVal += pad;
+
+  // Time range
+  const times = allPoints.map((p) => p.x);
+  const minT = Math.min(...times);
+  const maxT = Math.max(...times);
+  const tRange = maxT - minT || 1;
+
+  const xFor = (t) => CHART_PAD + ((t - minT) / tRange) * (CHART_W - 2 * CHART_PAD);
+  const yFor = (v) => CHART_H - CHART_PAD - ((v - minVal) / (maxVal - minVal)) * (CHART_H - 2 * CHART_PAD);
+
+  const gridLines = [CHART_H / 4, CHART_H / 2, (3 * CHART_H) / 4]
+    .map((y) => `<line x1="${CHART_PAD}" y1="${y}" x2="${CHART_W - CHART_PAD}" y2="${y}" class="grid-line"/>`)
+    .join('');
+
+  // Single point → render a dot
+  if (allPoints.length === 1) {
+    const p = allPoints[0];
+    const s = series.find((ser) => ser.points.includes(p)) || series[0];
+    const cx = xFor(p.x).toFixed(1);
+    const cy = yFor(p.y).toFixed(1);
+    return `
+      <svg class="trend-chart" viewBox="0 0 ${CHART_W} ${CHART_H}" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(formatTypeLabel(type))} trend">
+        ${gridLines}
+        <circle cx="${cx}" cy="${cy}" r="4" class="trend-dot" style="stroke:${s.color}"/>
+      </svg>
+    `;
+  }
+
+  // Build paths
+  const paths = series.map((s) => {
+    if (s.points.length === 0) return '';
+    let d = '';
+    s.points.forEach((p, i) => {
+      const x = xFor(p.x).toFixed(1);
+      const y = yFor(p.y).toFixed(1);
+      d += (i === 0 ? 'M' : ' L') + ` ${x} ${y}`;
+    });
+    return d;
+  });
+
+  const dots = series
+    .flatMap((s) =>
+      s.points.map((p) => {
+        const cx = xFor(p.x).toFixed(1);
+        const cy = yFor(p.y).toFixed(1);
+        return `<circle cx="${cx}" cy="${cy}" r="2.5" class="trend-dot" style="stroke:${s.color}"/>`;
+      }),
+    )
+    .join('');
+
+  return `
+    <svg class="trend-chart" viewBox="0 0 ${CHART_W} ${CHART_H}" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(formatTypeLabel(type))} trend">
+      ${gridLines}
+      ${paths.map((d, i) => (d ? `<path d="${d}" class="trend-line" style="stroke:${series[i].color}"/>` : '')).join('')}
+      ${dots}
+    </svg>
+  `;
 }
 
 function familySnapshot(profile, people, userId, alerts, readingsByUser) {
